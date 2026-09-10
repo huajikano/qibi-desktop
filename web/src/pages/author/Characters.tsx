@@ -6,14 +6,12 @@ import {
   Map as MapIcon,
   PenLine,
   Plus,
-  RefreshCw,
-  Sparkles,
+  RefreshCw, 
   Square,
   Trash2,
   UserPlus,
   Wand2,
-  X,
-} from "lucide-react";
+  X, Sparkles } from "lucide-react";
 import { api, characterAiApi } from "../../api";
 import { ConfirmDialog, PromptDialog } from "../../components/Dialog";
 import type { Character, Novel } from "../../types";
