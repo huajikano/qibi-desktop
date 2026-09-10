@@ -2345,73 +2345,122 @@ const isReportMode = aiMode === "review" || aiMode === "analyze" || aiMode === "
                   </div>
                 )}
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {[
-                  ["🌿 7 Gate去AI味", "请严格按 7 Gate 门禁清除本文中的 AI 写作痕迹与套路词，改写自然生动的网文正文。"],
-                  ["⚖️ 主编/读者对抗审查", "请模拟网文主编与挑剔读者双重视角，对本章进行深度找茬审查，指出毒点与修改方案。"],
-                  ["⚠️ 毒点/爽点诊断", "请重点审查本章核心爽点是否成立、章末钩子是否有留存率、是否存在劝退读者的毒点。"],
-                  ["🔍 黄金三章/爆款拆解", "请深度拆解本文的故事核、开篇抓人点、情绪释放曲线与可复用写作技巧。"],
-                  ["章末钩子检查", "请检查本章结尾的悬念、情绪落点和下一章阅读动力，给出具体修改建议。"],
-                  ["节奏检查", "请检查本章节奏、冲突密度和信息释放，指出拖沓或跳跃处。"],
-                  ["📌 提炼本章微摘要(百万字前情提要)", "请提炼本章100字核心剧情摘要、关键转折与章末悬念钩子，供后续章节保持高度连贯。"],
-                  ["👤 提取角色最新状态账本", "请基于本章剧情，提取主要出场角色的最新动态变化（突破的境界、所处地点、获得的法宝道具、受到的伤病、最新心境）。"],
-                  ["伏笔检查", "请根据当前作品正文、细纲和伏笔记录，检查已回收、待回收和可能遗忘的伏笔。"],
-                  ["总纲规划", "请根据当前作品设定生成后续分卷总纲和章节规划，先给结构再给关键冲突。"],
-                  ["生成配图 Prompt", "请根据本章内容生成 3 条适合小说配图的中文 Prompt，只输出 Prompt。"]
-                ].map(([label, prompt]) => (
-                  <button key={label} className="btn-ghost !min-h-7 !px-2 text-[10px]" onClick={() => {
-                    if (label.includes("提炼本章微摘要") && activeId) {
-                      api.post<{ ok: boolean; summary: any }>("/ai/million/summarize-chapter", { chapterId: activeId })
-                        .then((res) => {
-                          setAiReport("【✅ 章节微摘要提炼并已自动保存入库】\n\n" + JSON.stringify(res.summary, null, 2));
-                        })
-                        .catch((err) => {
-                          setAiExtra(prompt);
-                          setAiMode("summary");
-                          aiModeRef.current = "summary";
-                          void runAI("summary");
-                        });
-                      return;
-                    }
-                    const m: AiMode = label.includes("去AI味") ? "deslop"
-                      : label.includes("审查") || label.includes("诊断") ? "review"
-                      : label.includes("拆解") ? "analyze"
-                      : label.includes("提炼") ? "summary" : "suggest";
-                    setAiMode(m);
-                    aiModeRef.current = m;
-                    setAiExtra(prompt);
-                    void runAI(m);
-                  }}>{label}</button>
-                ))}
-              </div>
             </div>
-            <div>
-              <label className="mb-1.5 block text-xs text-ink-2">任务</label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {([
-                  ["draft", "✍️ 细纲写章"],
-                  ["continue", "⏩ 智能续写"],
-                  ["deslop-selection", "🌿 去味(选区)"],
-                  ["deslop", "🌿 去味(全文)"],
-                  ["polish-selection", "🎨 润色选中"],
-                  ["polish", "🎨 润色全文"],
-                  ["expand", "📖 丰满扩写"],
-                  ["review", "⚖️ 对抗审查"],
-                  ["analyze", "🔍 爆款拆文"],
-                  ["summary", "📝 章节摘要"],
-                  ["outline", "📋 细纲规划"],
-                  ["suggest", "💡 创作顾问"],
-                ] as const).map(([k, label]) => (
-                  <button
-                    key={k}
-                    className={`rounded-md border px-2 py-1.5 text-xs transition-colors ${
-                      aiMode === k ? "border-primary-2 bg-primary-soft text-primary-2 font-medium" : "border-border text-ink-2 hover:text-ink"
-                    }`}
-                    onClick={() => setAiMode(k)}
-                  >
-                    {label}
-                  </button>
-                ))}
+            {/* 统一分类任务控制台 */}
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1.5 flex items-center justify-between text-xs font-semibold text-ink">
+                  <span>AI 创作任务</span>
+                  <span className="text-[10px] font-normal text-ink-3">选择模式后点击底部「开始生成」</span>
+                </label>
+
+                {/* 任务分类一：正文生成与续写 */}
+                <div className="mb-2.5">
+                  <span className="text-[10px] text-ink-3 font-medium block mb-1">✍️ 正文创作</span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      ["draft", "✍️ 细纲写章", "按当前细纲与前文脉络生成完整章节"],
+                      ["continue", "⏩ 承接续写", "紧跟光标处自然往下续写情节"],
+                      ["expand", "📖 细节扩写", "丰富环境描写、心理活动与神态对话"],
+                    ].map(([k, label, tip]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        title={tip}
+                        className={`rounded-md border px-2 py-1.5 text-xs transition-colors ${
+                          aiMode === k ? "border-primary-2 bg-primary-soft text-primary-2 font-medium shadow-sm" : "border-border text-ink-2 hover:text-ink hover:bg-surface-1"
+                        }`}
+                        onClick={() => setAiMode(k as any)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 任务分类二：7 Gate 门禁去AI味与文本精修 */}
+                <div className="mb-2.5">
+                  <span className="text-[10px] text-emerald-400 font-medium block mb-1">🌿 7 Gate去AI味与精修</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      ["deslop", "🌿 7 Gate去味(全文)", "执行7重门禁，彻底洗去套路词与AI腔"],
+                      ["deslop-selection", "🌿 7 Gate去味(选区)", "针对编辑器中选中的段落消除AI套路"],
+                      ["polish", "🎨 润色全文", "修正语病与错字，提升全章文学质感"],
+                      ["polish-selection", "🎨 润色选中", "对选中的段落精细打磨文笔"],
+                    ].map(([k, label, tip]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        title={tip}
+                        className={`rounded-md border px-2 py-1.5 text-xs transition-colors ${
+                          aiMode === k ? "border-emerald-500/80 bg-emerald-500/10 text-emerald-300 font-medium shadow-sm" : "border-border text-ink-2 hover:text-ink hover:bg-surface-1"
+                        }`}
+                        onClick={() => setAiMode(k as any)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 任务分类三：推演审查与辅助输出 */}
+                <div>
+                  <span className="text-[10px] text-amber-400 font-medium block mb-1">⚖️ 审查、拆解与规划 (输出到辅助面板)</span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      ["review", "⚖️ 毒点审查", "模拟主编挑剔老读者找茬审查与评级"],
+                      ["analyze", "🔍 爆款拆解", "深度剖析底层看点、情绪线与金手指"],
+                      ["outline", "📋 细纲规划", "生成后续分章节核心冲突与细纲"],
+                      ["summary", "📝 章节摘要", "提炼100字前情微摘要，供后续连贯"],
+                      ["suggest", "💡 剧情顾问", "针对卡文与设定提供可执行建议"],
+                    ].map(([k, label, tip]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        title={tip}
+                        className={`rounded-md border px-2 py-1.5 text-xs transition-colors ${
+                          aiMode === k ? "border-primary-2 bg-primary-soft text-primary-2 font-medium shadow-sm" : "border-border text-ink-2 hover:text-ink hover:bg-surface-1"
+                        }`}
+                        onClick={() => setAiMode(k as any)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 常用补充要求预设（点击快速填入输入框，绝不自动偷跑） */}
+              <div>
+                <span className="text-[10px] text-ink-3 block mb-1">💡 常用要求预设（点击填入下方输入框）：</span>
+                <div className="flex flex-wrap gap-1">
+                  {[
+                    ["章末钩子", "重点检查本章结尾的悬念、情绪落点和下一章阅读动力。"],
+                    ["节奏把控", "检查本章冲突密度和信息释放，指出拖沓或跳跃处。"],
+                    ["伏笔核对", "结合全书设定和前文，核查本章伏笔的埋设与回收情况。"],
+                    ["角色账本", "提取出场角色的最新境界、道具、伤病及心境动态账本。"],
+                    ["配图Prompt", "根据本章名场面生成3条中文小说配图提示词。"],
+                  ].map(([tag, promptText]) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      className="rounded border border-border bg-surface-1 px-1.5 py-0.5 text-[10px] text-ink-3 hover:border-primary-2/40 hover:text-ink transition"
+                      onClick={() => setAiExtra(prev => prev ? `${prev}；${promptText}` : promptText)}
+                      title="点击填入下方要求输入框"
+                    >
+                      +{tag}
+                    </button>
+                  ))}
+                  {aiExtra && (
+                    <button
+                      type="button"
+                      className="rounded px-1.5 py-0.5 text-[10px] text-ink-3 hover:text-red-400"
+                      onClick={() => setAiExtra("")}
+                    >
+                      清空要求
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
             <div>
