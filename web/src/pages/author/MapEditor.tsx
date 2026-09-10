@@ -209,32 +209,55 @@ export default function MapEditor() {
     })();
   }, [novelId]);
 
-  // 载入指定地图文档
-  const loadMap = (doc: MapDocument, fallbackTpl?: typeof TEMPLATES[0]) => {
+  // 载入指定地图文档（完整获取后端 data 属性）
+  const loadMap = async (doc: MapDocument, fallbackTpl?: typeof TEMPLATES[0]) => {
     setCurrentMapId(doc.id);
     setMapTitle(doc.name || "未命名地图");
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
 
-    let parsedNodes: LocationNode[] = [];
-    let parsedEdges: RouteEdge[] = [];
-
     try {
-      if (typeof doc.nodes === "string") parsedNodes = JSON.parse(doc.nodes);
-      else if (Array.isArray(doc.nodes)) parsedNodes = doc.nodes;
-    } catch {}
+      // 从后端读取完整的地图详情
+      const full = await api.get<any>(`/maps/${doc.id}`);
+      const mapData = full?.data || {};
+      let parsedNodes: LocationNode[] = [];
+      let parsedEdges: RouteEdge[] = [];
 
-    try {
-      if (typeof doc.edges === "string") parsedEdges = JSON.parse(doc.edges);
-      else if (Array.isArray(doc.edges)) parsedEdges = doc.edges;
-    } catch {}
+      if (Array.isArray(mapData.nodes)) {
+        parsedNodes = mapData.nodes;
+      } else if (typeof mapData.nodes === "string") {
+        parsedNodes = JSON.parse(mapData.nodes);
+      } else if (Array.isArray(full.nodes)) {
+        parsedNodes = full.nodes;
+      }
 
-    if (parsedNodes.length === 0 && fallbackTpl) {
-      setNodes(fallbackTpl.nodes as LocationNode[]);
-      setEdges(fallbackTpl.edges as RouteEdge[]);
-    } else {
-      setNodes(parsedNodes);
-      setEdges(parsedEdges);
+      if (Array.isArray(mapData.edges)) {
+        parsedEdges = mapData.edges;
+      } else if (typeof mapData.edges === "string") {
+        parsedEdges = JSON.parse(mapData.edges);
+      } else if (Array.isArray(full.edges)) {
+        parsedEdges = full.edges;
+      }
+
+      if (mapData.settings) {
+        const s = typeof mapData.settings === "string" ? JSON.parse(mapData.settings) : mapData.settings;
+        if (s.zoom) setZoom(s.zoom);
+        if (s.pan) setPan(s.pan);
+      }
+
+      if (parsedNodes.length === 0 && fallbackTpl) {
+        setNodes(fallbackTpl.nodes as LocationNode[]);
+        setEdges(fallbackTpl.edges as RouteEdge[]);
+      } else {
+        setNodes(parsedNodes);
+        setEdges(parsedEdges);
+      }
+    } catch (err) {
+      console.error("加载地图详情失败:", err);
+      if (fallbackTpl) {
+        setNodes(fallbackTpl.nodes as LocationNode[]);
+        setEdges(fallbackTpl.edges as RouteEdge[]);
+      }
     }
   };
 
@@ -245,9 +268,11 @@ export default function MapEditor() {
     try {
       await api.patch(`/maps/${currentMapId}`, {
         name: mapTitle,
-        nodes: JSON.stringify(nodes),
-        edges: JSON.stringify(edges),
-        settings: JSON.stringify({ zoom, pan }),
+        data: {
+          nodes,
+          edges,
+          settings: { zoom, pan },
+        },
       });
       setMaps(prev => prev.map(m => m.id === currentMapId ? { ...m, name: mapTitle } : m));
       setSaveSuccess(true);
@@ -440,7 +465,7 @@ export default function MapEditor() {
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-stone-800 bg-stone-900/90 px-4 backdrop-blur z-20">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate(`/author/novel/${novelId}`)}
+            onClick={() => navigate(`/author/book/${novelId}`)}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-stone-700 bg-stone-800 text-stone-300 hover:bg-stone-700 hover:text-white transition"
             title="返回作品"
           >

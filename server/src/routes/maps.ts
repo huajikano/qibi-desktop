@@ -50,7 +50,15 @@ router.patch("/maps/:id", ownsMap, (req, res) => {
     db.prepare("UPDATE maps SET name = ?, updated_at = datetime('now') WHERE id = ?").run(String(n.name), id);
   }
   if (n.data !== undefined) {
-    db.prepare("UPDATE maps SET data = ?, updated_at = datetime('now') WHERE id = ?").run(JSON.stringify(n.data), id);
+    const dataStr = typeof n.data === "string" ? n.data : JSON.stringify(n.data);
+    db.prepare("UPDATE maps SET data = ?, updated_at = datetime('now') WHERE id = ?").run(dataStr, id);
+  } else if (n.nodes !== undefined || n.edges !== undefined || n.settings !== undefined) {
+    // 兼容前端直接传 nodes/edges 的格式
+    const parsedNodes = typeof n.nodes === "string" ? JSON.parse(n.nodes) : (n.nodes || []);
+    const parsedEdges = typeof n.edges === "string" ? JSON.parse(n.edges) : (n.edges || []);
+    const parsedSettings = typeof n.settings === "string" ? JSON.parse(n.settings) : (n.settings || {});
+    const combinedData = JSON.stringify({ nodes: parsedNodes, edges: parsedEdges, settings: parsedSettings });
+    db.prepare("UPDATE maps SET data = ?, updated_at = datetime('now') WHERE id = ?").run(combinedData, id);
   }
   const updated = db.prepare("SELECT * FROM maps WHERE id = ?").get(id) as any;
   let data = {};
