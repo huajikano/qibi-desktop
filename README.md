@@ -21,7 +21,7 @@
 
 前往 [GitHub Releases 最新发布页](https://github.com/huajikano/qibi-desktop/releases/latest) 下载：
 
-- **Windows 64位 便携版**：`起笔-1.2.2-portable.exe`
+- **Windows 64位 便携版**：`起笔-1.2.3-portable.exe`
 - **运行方式**：无需安装，下载后双击即可启动运行。
 
 ---
@@ -46,7 +46,7 @@ npm run dev:server    # 启动本地后端服务
 npm run build:exe
 ```
 
-打包完成后，可执行文件将生成在 `desktop/release/起笔-1.2.2-portable.exe`。
+打包完成后，可执行文件将生成在 `desktop/release/起笔-1.2.3-portable.exe`。
 
 ---
 

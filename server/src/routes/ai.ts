@@ -709,10 +709,58 @@ export async function chatWithTools(opts: {
       type: "function",
       function: { name: t.name, description: t.description, parameters: t.inputSchema || { type: "object", properties: {} } },
     }));
-    const oaMessages = [{ role: "system", content: system }, ...messages.map((m) => ({
-      role: m.role,
-      content: typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content : String(m.content),
-    }))];
+    // 核心修复：精准将 Anthropic 格式的历史消息映射为标准 OpenAI ChatCompletion 协议
+    const oaMessages: any[] = [{ role: "system", content: system }];
+
+    for (const m of messages) {
+      if (m.role === "assistant") {
+        if (Array.isArray(m.content)) {
+          let textContent = "";
+          const toolCalls: any[] = [];
+          for (const b of m.content) {
+            if (b.type === "text" && typeof b.text === "string") {
+              textContent += b.text;
+            } else if (b.type === "tool_use") {
+              toolCalls.push({
+                id: b.id,
+                type: "function",
+                function: {
+                  name: b.name,
+                  arguments: typeof b.input === "string" ? b.input : JSON.stringify(b.input || {}),
+                },
+              });
+            }
+          }
+          const msgObj: any = { role: "assistant", content: textContent || null };
+          if (toolCalls.length > 0) msgObj.tool_calls = toolCalls;
+          oaMessages.push(msgObj);
+        } else {
+          oaMessages.push({ role: "assistant", content: String(m.content || "") });
+        }
+      } else if (m.role === "user") {
+        if (Array.isArray(m.content) && m.content.some((b: any) => b.type === "tool_result")) {
+          // 工具结果转换为 OpenAI 标准的 role: "tool" 消息序列
+          for (const b of m.content) {
+            if (b.type === "tool_result") {
+              oaMessages.push({
+                role: "tool",
+                tool_call_id: b.tool_use_id,
+                content: typeof b.content === "string" ? b.content : JSON.stringify(b.content || ""),
+              });
+            } else if (b.type === "text") {
+              oaMessages.push({ role: "user", content: b.text });
+            }
+          }
+        } else {
+          oaMessages.push({
+            role: "user",
+            content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+          });
+        }
+      } else {
+        oaMessages.push({ role: m.role, content: String(m.content) });
+      }
+    }
     const res = await fetch(url, {
       method: "POST",
       signal,

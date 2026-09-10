@@ -1,6 +1,6 @@
 {
   "name": "novelforge",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "private": true,
   "description": "起笔 · 公网多作者小说创作平台（起点中文网风格）",
   "workspaces": [
