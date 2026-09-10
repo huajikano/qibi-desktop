@@ -19,7 +19,7 @@
 
 ## 📥 快速下载
 
-前往 [GitHub Releases 最新发布页](https://github.com/a5528828/qibi-desktop/releases/latest) 下载：
+前往 [GitHub Releases 最新发布页](https://github.com/huajikano/qibi-desktop/releases/latest) 下载：
 
 - **Windows 64位 便携版**：`起笔-1.0.0-portable.exe`
 - **运行方式**：无需安装，下载后双击即可启动运行。
@@ -32,7 +32,7 @@
 
 ```bash
 # 1. 克隆代码仓库
-git clone https://github.com/a5528828/qibi-desktop.git
+git clone https://github.com/huajikano/qibi-desktop.git
 cd qibi-desktop
 
 # 2. 安装项目依赖
