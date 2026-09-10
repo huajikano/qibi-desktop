@@ -1,0 +1,45 @@
+{
+  "name": "desktop",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "build:server": "node build-server.mjs",
+    "start": "npm run build:server && electron .",
+    "start:server": "npm run build:server && electron . --server",
+    "dist": "npm run build:server && electron-builder",
+    "dist:server": "npm run build:server && electron-builder --config electron-builder-server.json"
+  },
+  "devDependencies": {
+    "electron": "^42.8.1",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.2"
+  },
+  "description": "起笔 · 小说创作平台桌面版",
+  "author": "novelforge",
+  "build": {
+    "electronVersion": "42.9.3",
+    "appId": "com.novelforge.desktop",
+    "productName": "起笔",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.mjs",
+      "server-bundle.mjs",
+      "web-dist/**",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "portable": {
+      "artifactName": "起笔-${version}-portable.exe"
+    }
+  }
+}

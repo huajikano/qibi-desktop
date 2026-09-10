@@ -1,0 +1,34 @@
+{
+  "electronVersion": "42.9.3",
+  "appId": "com.novelforge.server",
+  "productName": "起笔-公网服务器",
+  "asar": true,
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "main.mjs",
+    "server-main.mjs",
+    "server-bundle.mjs",
+    "server-ui/**",
+    "web-dist/**",
+    "cloudflared-windows-amd64.exe",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "cloudflared-windows-amd64.exe",
+      "to": "cloudflared-windows-amd64.exe",
+      "filter": ["*"]
+    }
+  ],
+  "win": {
+    "signAndEditExecutable": false,
+    "target": [
+      { "target": "portable", "arch": ["x64"] }
+    ]
+  },
+  "portable": {
+    "artifactName": "起笔-公网服务器-${version}-portable.exe"
+  }
+}
