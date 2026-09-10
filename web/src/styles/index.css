@@ -1,0 +1,240 @@
+@import "tailwindcss";
+
+/* ===== 起笔 · 设计令牌系统（东方典雅书卷 + 现代高端工作台） ===== */
+@theme {
+  /* 背景层级：深邃纸墨黑 */
+  --color-bg: #090912;
+  --color-surface: #111122;
+  --color-surface-1: #15152a;
+  --color-surface-2: #1a1a34;
+  --color-surface-3: #222244;
+  --color-surface-elevated: #16162e;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-2: rgba(255, 255, 255, 0.15);
+  --color-border-accent: rgba(230, 0, 18, 0.28);
+
+  /* 品牌色系：朱砂红与曜金 */
+  --color-primary: #e60012;
+  --color-primary-2: #ff334b;
+  --color-primary-soft: rgba(230, 0, 18, 0.12);
+  --color-primary-glow: rgba(230, 0, 18, 0.25);
+  --color-gold: #e5b95c;
+  --color-gold-soft: rgba(229, 185, 92, 0.12);
+  --color-link: #4ea8ff;
+
+  /* 文字层次：墨韵灰白 */
+  --color-ink: #f0f0f8;
+  --color-ink-2: #b4b2c8;
+  --color-ink-3: #75738e;
+  --color-ink-faint: #4e4c64;
+
+  /* 字体家族 */
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", serif;
+  --font-sans: "Plus Jakarta Sans", "Inter", "Noto Sans SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-bg text-ink font-sans antialiased;
+  background-image:
+    radial-gradient(1000px 500px at 50% -5%, rgba(230, 0, 18, 0.09), transparent 70%),
+    radial-gradient(800px 400px at 90% 90%, rgba(229, 185, 92, 0.03), transparent 60%);
+  min-height: 100dvh;
+}
+
+/* 精致微质感滚动条 */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #252542;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #383862;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* 焦点可见（无障碍与专业感） */
+:focus-visible {
+  outline: 2px solid var(--color-primary-2);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* 现代立体拟态与光泽按钮 */
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-200 select-none cursor-pointer;
+  min-height: 38px;
+  padding: 0 16px;
+}
+.btn:active {
+  transform: scale(0.975);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg font-medium select-none cursor-pointer text-white;
+  min-height: 38px;
+  padding: 0 16px;
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-2) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 2px 10px rgba(230, 0, 18, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-primary:hover:not(:disabled) {
+  box-shadow: 0 4px 18px rgba(230, 0, 18, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0.5px) scale(0.98);
+}
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-secondary {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-200 select-none cursor-pointer;
+  min-height: 38px;
+  padding: 0 16px;
+  background: var(--color-surface-2);
+  color: var(--color-ink);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-surface-3);
+  border-color: var(--color-border-2);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+.btn-secondary:active:not(:disabled) {
+  transform: translateY(0.5px) scale(0.98);
+}
+.btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-200 select-none cursor-pointer;
+  min-height: 38px;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--color-ink-2);
+  border: 1px solid transparent;
+}
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--color-border);
+  color: var(--color-ink);
+}
+.btn-ghost:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-danger {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-200 select-none cursor-pointer;
+  min-height: 38px;
+  padding: 0 16px;
+  background: rgba(255, 75, 75, 0.08);
+  color: #ff6e6e;
+  border: 1px solid rgba(255, 80, 80, 0.3);
+}
+.btn-danger:hover:not(:disabled) {
+  background: rgba(255, 75, 75, 0.16);
+  border-color: rgba(255, 80, 80, 0.5);
+  box-shadow: 0 2px 8px rgba(255, 75, 75, 0.2);
+}
+.btn-danger:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.btn-danger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 磨砂玻璃输入框 */
+.input {
+  @apply w-full rounded-lg border border-border bg-surface-1 px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-3 transition-all duration-200;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.input:hover:not(:focus) {
+  border-color: var(--color-border-2);
+}
+.input:focus {
+  outline: none;
+  border-color: var(--color-primary-2);
+  background: var(--color-surface);
+  box-shadow: 0 0 0 3px rgba(230, 0, 18, 0.16), inset 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* 微质感卡片与容器 */
+.card {
+  @apply rounded-xl border border-border bg-surface/90 backdrop-blur-md;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.32), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+/* 典雅书卷标题 */
+.serif-title {
+  @apply font-serif font-bold tracking-wider;
+}
+
+/* CodeMirror 专业长文排版 */
+.cm-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  font-size: 16px;
+}
+.cm-editor .cm-scroller {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-family: var(--font-serif);
+  line-height: 2.1;
+  letter-spacing: 0.02em;
+}
+.cm-editor .cm-content {
+  min-height: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* 尊重系统减弱动效 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

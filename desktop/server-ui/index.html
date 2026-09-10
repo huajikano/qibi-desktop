@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>起笔 · 公网服务器控制中心</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card-bg: #181b24;
+      --card-border: #262a36;
+      --text-main: #f0f2f5;
+      --text-sub: #9ba1b0;
+      --text-dim: #5e6475;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --accent-soft: rgba(59, 130, 246, 0.12);
+      --success: #10b981;
+      --success-soft: rgba(16, 185, 129, 0.12);
+      --warning: #f59e0b;
+      --warning-soft: rgba(245, 158, 11, 0.12);
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px;
+      overflow-x: hidden;
+    }
+    /* 顶部标题栏 */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, #3b82f6, #6366f1);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 18px;
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+    .brand-text h1 {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .brand-text p {
+      font-size: 12px;
+      color: var(--text-sub);
+      margin-top: 2px;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      background: var(--success-soft);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+      70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+
+    /* 主网格 */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    /* 卡片通用样式 */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      transition: border-color 0.2s;
+    }
+    .card:hover {
+      border-color: rgba(59, 130, 246, 0.3);
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .card-title .tag {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    /* 公网专属重点卡片 */
+    .card-public {
+      background: linear-gradient(180deg, rgba(30, 41, 59, 0.8), var(--card-bg));
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+    .public-url-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px dashed rgba(59, 130, 246, 0.4);
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin: 10px 0;
+    }
+    .public-url-text {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      color: #60a5fa;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      user-select: text;
+    }
+    .btn-group {
+      display: flex;
+      gap: 8px;
+    }
+    button {
+      cursor: pointer;
+      border: none;
+      outline: none;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 7px 14px;
+      border-radius: 6px;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+      border: 1px solid var(--card-border);
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+    .btn-success {
+      background: var(--success);
+      color: #fff;
+    }
+    .btn-success:hover {
+      background: #059669;
+    }
+
+    /* 地址列表项 */
+    .url-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+    .url-item span {
+      color: var(--text-sub);
+      user-select: text;
+    }
+    .url-item .copy-btn {
+      font-size: 11px;
+      padding: 3px 8px;
+      color: var(--accent);
+      background: transparent;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 4px;
+    }
+    .url-item .copy-btn:hover {
+      background: var(--accent-soft);
+    }
+
+    /* 日志控制台 */
+    .log-box {
+      background: #0b0c10;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #a0aec0;
+      height: 140px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      user-select: text;
+      line-height: 1.5;
+    }
+    .log-line {
+      margin-bottom: 2px;
+    }
+    .log-line.info { color: #60a5fa; }
+    .log-line.success { color: #34d399; }
+    .log-line.warn { color: #fbbf24; }
+    .log-line.error { color: #f87171; }
+
+    /* 底部操作条 */
+    .footer {
+      margin-top: auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 14px;
+      border-top: 1px solid var(--card-border);
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #10b981;
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.25s;
+      pointer-events: none;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 顶部状态栏 -->
+  <div class="header">
+    <div class="brand">
+      <div class="brand-logo">起</div>
+      <div class="brand-text">
+        <h1>起笔 · 公网服务器</h1>
+        <p>全能小说创作平台 · 本地主服务器与外网隧道</p>
+      </div>
+    </div>
+    <div id="status-badge" class="status-badge">
+      <div class="pulse-dot"></div>
+      <span id="status-text">服务与公网监听已就绪 (0.0.0.0)</span>
+    </div>
+  </div>
+
+  <!-- 主体内容 -->
+  <div class="grid">
+
+    <!-- 1. 公网隧道专属卡片 -->
+    <div class="card card-public">
+      <div class="card-title">
+        <span>🌐 全球公网访问网址 (Cloudflare 免费安全隧道)</span>
+        <span id="tunnel-status-tag" class="tag">正在检测隧道...</span>
+      </div>
+      <p style="font-size: 12px; color: var(--text-sub); line-height: 1.5;">
+        异地好友与移动端可在浏览器或客户端输入下方公网网址，即可直接登录与创作：
+      </p>
+
+      <div class="public-url-box">
+        <div id="public-url" class="public-url-text">正在启动隧道并生成公网网址...</div>
+        <div class="btn-group">
+          <button id="copy-public-btn" class="btn-primary" onclick="copyText('public-url')">📋 复制网址</button>
+          <button id="open-public-btn" class="btn-secondary" onclick="openUrl('public-url')">🚀 浏览器打开</button>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 10px;">
+        <button id="restart-tunnel-btn" class="btn-secondary" style="font-size: 11px; padding: 5px 10px;" onclick="restartTunnel()">
+          🔄 重新获取公网域名
+        </button>
+        <button class="btn-success" style="font-size: 11px; padding: 5px 12px;" onclick="openLocalApp()">
+          💻 打开本机创作台
+        </button>
+      </div>
+    </div>
+
+    <!-- 2. 本机与局域网访问卡片 -->
+    <div class="card">
+      <div class="card-title">
+        <span>📱 局域网 / 同 WiFi 设备直连</span>
+        <span class="tag">局域网无需流量</span>
+      </div>
+      <div id="lan-list">
+        <!-- 动态填充局域网 IP -->
+      </div>
+    </div>
+
+    <!-- 3. 本地存储安全保证 -->
+    <div class="card" style="padding: 12px 18px; font-size: 12px;">
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+          <span style="color: #34d399; font-weight: 600;">🔒 100% 数据本地化保密：</span>
+          <span style="color: var(--text-sub);">所有作者账号、小说正文、角色与地图全部保存在当前电脑本地数据库中。</span>
+        </div>
+        <button class="btn-secondary" style="font-size: 11px; padding: 4px 10px;" onclick="openDataFolder()">
+          📂 打开数据目录
+        </button>
+      </div>
+    </div>
+
+    <!-- 4. 实时运行日志 -->
+    <div class="card">
+      <div class="card-title" style="margin-bottom: 8px;">
+        <span>📜 服务器实时日志</span>
+        <span style="font-size: 11px; color: var(--text-dim); cursor: pointer;" onclick="clearLogs()">清空</span>
+      </div>
+      <div id="log-box" class="log-box"></div>
+    </div>
+
+  </div>
+
+  <!-- 底部状态条 -->
+  <div class="footer">
+    <div>起笔 NovelForge · 服务端口: <span id="server-port">3000</span> · 运行时间: <span id="uptime">0秒</span></div>
+    <div>保持本窗口开启即可持续为公网提供服务</div>
+  </div>
+
+  <div id="toast" class="toast">已成功复制到剪贴板！</div>
+
+  <script>
+    const { ipcRenderer, shell } = window.require ? window.require('electron') : { ipcRenderer: null, shell: null };
+
+    let currentPublicUrl = "";
+    let currentLocalUrl = "http://localhost:3000";
+
+    function appendLog(text, level = 'info') {
+      const box = document.getElementById('log-box');
+      if (!box) return;
+      const line = document.createElement('div');
+      line.className = `log-line ${level}`;
+      const time = new Date().toLocaleTimeString();
+      line.textContent = `[${time}] ${text}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function clearLogs() {
+      const box = document.getElementById('log-box');
+      if (box) box.innerHTML = '';
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      if (!t) return;
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2000);
+    }
+
+    function copyText(elemId) {
+      const elem = document.getElementById(elemId);
+      const text = elem ? (elem.dataset.url || elem.textContent) : '';
+      if (!text || text.includes('正在启动') || text.includes('未找到')) return;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(() => showToast('已成功复制公网网址！'));
+      }
+    }
+
+    function openUrl(elemId) {
+      const elem = document.getElementById(elemId);
+      const text = elem ? (elem.dataset.url || elem.textContent) : '';
+      if (!text || text.includes('正在启动') || text.includes('未找到')) return;
+      if (shell) {
+        shell.openExternal(text);
+      } else {
+        window.open(text, '_blank');
+      }
+    }
+
+    function openLocalApp() {
+      if (shell) {
+        shell.openExternal(currentLocalUrl);
+      } else {
+        window.open(currentLocalUrl, '_blank');
+      }
+    }
+
+    function openDataFolder() {
+      if (ipcRenderer) {
+        ipcRenderer.send('open-data-folder');
+      }
+    }
+
+    function restartTunnel() {
+      const tag = document.getElementById('tunnel-status-tag');
+      const pubElem = document.getElementById('public-url');
+      if (tag) tag.textContent = '正在重新建立隧道...';
+      if (pubElem) pubElem.textContent = '正在重新分配公网网址...';
+      appendLog('正在重新连接 Cloudflare 隧道...', 'warn');
+      if (ipcRenderer) {
+        ipcRenderer.send('restart-tunnel');
+      }
+    }
+
+    // 监听来自 Electron 主进程的 IPC 事件
+    if (ipcRenderer) {
+      ipcRenderer.on('server-ready', (_, data) => {
+        currentLocalUrl = `http://localhost:${data.port}`;
+        document.getElementById('server-port').textContent = data.port;
+        appendLog(`本地后端服务启动成功 (0.0.0.0:${data.port})`, 'success');
+
+        // 渲染局域网列表
+        const lanContainer = document.getElementById('lan-list');
+        if (lanContainer && data.lanUrls) {
+          lanContainer.innerHTML = data.lanUrls.map(url => `
+            <div class="url-item">
+              <span>${url}</span>
+              <button class="copy-btn" onclick="navigator.clipboard.writeText('${url}').then(() => showToast('已复制局域网地址'))">复制</button>
+            </div>
+          `).join('') || '<p style="font-size:12px;color:#888;">未找到局域网 IPv4</p>';
+        }
+      });
+
+      ipcRenderer.on('tunnel-url', (_, url) => {
+        currentPublicUrl = url;
+        const pubElem = document.getElementById('public-url');
+        const tag = document.getElementById('tunnel-status-tag');
+        if (pubElem) {
+          pubElem.textContent = url;
+          pubElem.dataset.url = url;
+        }
+        if (tag) {
+          tag.textContent = '隧道已连通 (HTTP2)';
+          tag.style.color = '#34d399';
+          tag.style.background = 'rgba(16, 185, 129, 0.15)';
+        }
+        appendLog(`Cloudflare 隧道已就绪，公网入口: ${url}`, 'success');
+      });
+
+      ipcRenderer.on('tunnel-error', (_, err) => {
+        const tag = document.getElementById('tunnel-status-tag');
+        const pubElem = document.getElementById('public-url');
+        if (tag) {
+          tag.textContent = '未启动 / 未安装 cloudflared';
+          tag.style.color = '#f87171';
+        }
+        if (pubElem && !currentPublicUrl) {
+          pubElem.textContent = '未检测到 cloudflared.exe（可在同目录放入或使用局域网直连）';
+        }
+        appendLog(`隧道状态: ${err}`, 'warn');
+      });
+
+      ipcRenderer.on('log', (_, msg) => {
+        appendLog(msg.text, msg.level);
+      });
+    }
+
+    // 运行时间计数器
+    let seconds = 0;
+    setInterval(() => {
+      seconds++;
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      const h = Math.floor(m / 60);
+      const str = h > 0 ? `${h}小时${m % 60}分${s}秒` : m > 0 ? `${m}分${s}秒` : `${s}秒`;
+      const upElem = document.getElementById('uptime');
+      if (upElem) upElem.textContent = str;
+    }, 1000);
+  </script>
+</body>
+</html>

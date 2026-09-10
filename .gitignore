@@ -1,0 +1,83 @@
+# Dependencies
+node_modules/
+**/node_modules/
+package-lock.json.bak
+
+# Build and Packaging outputs
+dist/
+**/dist/
+release/
+**/release/
+desktop/release/
+desktop/server-bundle/
+desktop/server-bundle.mjs
+desktop/web-dist/
+
+# Local databases, user novel data & materials (STRICT)
+data/
+**/data/
+server/data/
+backups/
+*.sqlite*
+*.db
+
+# Environment variables & secrets (STRICT)
+.env
+.env.*
+*.env
+server/.env
+
+# Logs and runtime traces
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Skills workspace, runs & temporary generation outputs
+skills/**/workspace/
+skills/**/runs/
+skills/distilled-author/workspace/
+skills/distilled-author/runs/
+
+# IDE, agent & Editor caches
+.claude/
+.codex/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+XXS.lnk
+*.lnk
+
+# Temp and extracted files
+extracted_oh_story/
+temp_oh_story/
+.tmp_*
+
+# Server deployment, tunnels, and public web hosting scripts
+deploy/
+Dockerfile
+docker-compose.yml
+cloudflared-windows-amd64.exe
+cloudflared/
+config.yml
+start-cloudflare-tunnel.bat
+一键启动公网服务*.bat
+启动服务器*.bat
+公网掌控者使用说明.txt
+
+# Local personal configs and extraction scripts
+analyze-zip-content.mjs
+check-header.mjs
+extract-all-skills.mjs
+inspect-zip.mjs
+scan-zip.mjs
+unzip-*.mjs
+astrbot_mcp.json
+claude_desktop_config.json
+.mcp.json
+清理说明.md
