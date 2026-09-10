@@ -8,9 +8,14 @@
 // 工具集：仅实现核心创作闭环所需的高频工具子集，避免与现有 25 项 MCP tools 重复。
 // 完整工具集仍可通过 MCP 服务端访问，由前端在 Settings 中复制 Claude Code 命令使用。
 
-import { db, countChineseChars, touchNovel } from "./db.js";
+import { db, countChineseChars, touchNovel, saveChapterRevision } from "./db.js";
 import { listAllExternalTools, callTool as callExternalTool } from "./mcpClient.js";
 import { indexOne, query as kbQuery, indexNovel as kbIndexNovel, kbStats as kbGetStats } from "./kb.js";
+import { streamChat } from "./routes/ai.js";
+
+// Agent runtime config, injected by the agent router at call time
+let _agentRuntimeConfig: { key: string; protocol: string; baseUrl: string; model: string } | null = null;
+export function setAgentRuntimeConfig(cfg: typeof _agentRuntimeConfig) { _agentRuntimeConfig = cfg; }
 
 export type AgentToolSpec = {
   name: string;
@@ -419,27 +424,165 @@ export async function dispatchAgentTool(
     case "kb_stats": {
       return kbGetStats(a.novelId);
     }
+    case "create_chapter": {
+      const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(a.novelId) as any;
+      if (!novel || novel.user_id !== ownerId) throw new Error("无权操作该作品");
+      if (!a.title || !String(a.title).trim()) throw new Error("章节标题不能为空");
+      const max = (db.prepare("SELECT COALESCE(MAX(sort_order),0) AS m FROM chapters WHERE novel_id=?").get(a.novelId) as any).m;
+      const info = db.prepare("INSERT INTO chapters (novel_id, title, sort_order) VALUES (?,?,?)").run(a.novelId, String(a.title).trim(), max + 1);
+      touchNovel(a.novelId);
+      const chapter = db.prepare("SELECT * FROM chapters WHERE id = ?").get(info.lastInsertRowid);
+      return { ok: true, chapter };
+    }
+    case "update_outline": {
+      const outline = db.prepare("SELECT * FROM outlines WHERE id = ?").get(a.outlineId) as any;
+      if (!outline) throw new Error("大纲条目不存在");
+      const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(outline.novel_id) as any;
+      if (!novel || novel.user_id !== ownerId) throw new Error("无权操作该大纲");
+      const fields: string[] = [];
+      const vals: any[] = [];
+      if (typeof a.title === "string") { fields.push("title = ?"); vals.push(a.title); }
+      if (typeof a.content === "string") { fields.push("content = ?"); vals.push(a.content); }
+      if (!fields.length) throw new Error("无更新字段");
+      fields.push("updated_at = datetime('now')");
+      vals.push(a.outlineId);
+      db.prepare(`UPDATE outlines SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
+      try { indexOne(outline.novel_id, "outline", a.outlineId); } catch { /* ignore */ }
+      return { ok: true, outline: db.prepare("SELECT * FROM outlines WHERE id = ?").get(a.outlineId) };
+    }
+        case "create_character": {
+      const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(a.novelId) as any;
+      if (!novel || novel.user_id !== ownerId) throw new Error("无权操作该作品");
+      if (!a.name || !String(a.name).trim()) throw new Error("角色姓名不能为空");
+      const maxCSort = (db.prepare("SELECT COALESCE(MAX(sort_order),0) AS m FROM characters WHERE novel_id=?").get(a.novelId) as any).m;
+      const cFields = ["name", "role", "gender", "age", "appearance", "personality", "background"] as const;
+      const insertFields = ["novel_id", "sort_order"];
+      const insertVals: any[] = [a.novelId, maxCSort + 1];
+      for (const f of cFields) {
+        if (a[f] !== undefined) { insertFields.push(f); insertVals.push(String(a[f])); }
+      }
+      const placeholders = insertVals.map(() => "?").join(", ");
+      const cInfo = db.prepare(`INSERT INTO characters (${insertFields.join(", ")}) VALUES (${placeholders})`)
+        .run(...insertVals);
+      try { indexOne(a.novelId, "character", Number(cInfo.lastInsertRowid)); } catch { /* ignore */ }
+      return { ok: true, character: db.prepare("SELECT * FROM characters WHERE id = ?").get(cInfo.lastInsertRowid) };
+    }
+    case "update_character": {
+      const ch = db.prepare("SELECT * FROM characters WHERE id = ?").get(a.characterId) as any;
+      if (!ch) throw new Error("角色不存在");
+      const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(ch.novel_id) as any;
+      if (!novel || novel.user_id !== ownerId) throw new Error("无权操作该角色");
+      const CHAR_FIELDS = ["name", "alias", "role", "gender", "age", "appearance", "personality", "background"] as const;
+      const fields: string[] = [];
+      const vals: any[] = [];
+      for (const f of CHAR_FIELDS) {
+        if (a[f] !== undefined) { fields.push(`${f} = ?`); vals.push(String(a[f])); }
+      }
+      if (!fields.length) throw new Error("无更新字段");
+      fields.push("updated_at = datetime('now')");
+      vals.push(a.characterId);
+      db.prepare(`UPDATE characters SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
+      try { indexOne(ch.novel_id, "character", a.characterId); } catch { /* ignore */ }
+      return { ok: true, character: db.prepare("SELECT * FROM characters WHERE id = ?").get(a.characterId) };
+    }
+    case "ai_draft": {
+      if (!_agentRuntimeConfig) throw new Error("Agent 写作引擎未初始化，请重试或检查 API 配置");
+      const chapter = db.prepare("SELECT * FROM chapters WHERE id = ?").get(a.chapterId) as any;
+      if (!chapter) throw new Error("章节不存在");
+      const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(a.novelId) as any;
+      if (!novel || novel.user_id !== ownerId) throw new Error("无权操作该章节");
+      const SYSTEM_PROMPTS: Record<string, string> = {
+        draft: "你是一位资深中文网络小说作家。你已获得该小说的整本小说完整章节目录、所有历史章节细纲与全部正文前文、全书人物卡与本章细纲设定。请深入结合全书已写章节的剧情脉络与人物性格发展，严格承接前序章节结尾情节，紧扣本章细纲，创作一章紧密承接前文的本章完整正文。文风：中文网络小说风格，节奏紧凑，描写生动，对话自然，每章约2500-4000字。直接输出正文，不要输出章节标题、不要解释。",
+        continue: "你是中文小说续写助手。你已掌握全书所有已有章节的全部正文上下文与本章已有内容。请紧接当前章节已有文字自然向下续写，保持与全书人物设定、世界观、文风、人称、节奏与口吻完全一致，自然延续情节走向。直接输出续写正文，不要输出标题与解释。",
+        deslop: "你是一位资深网络小说去AI味精修专家。你的任务是彻底清除文本中的AI写作痕迹，让文字回归自然、生动、非模板化的真实网文质感。【7 Gate 门禁系统】1. 彻底清除套路词；2. 打破三段式工整排比，打乱长短句节奏；3. 动作说话代替直接解释心理；4. 对话去除说教书面腔，加入口语与停顿；5. 删减无意义心理与注水过渡；6. 段末严禁升华总结与哲理感慨；7. 保持原剧情走向与人设不变，直接输出去AI味精修后的自然全文。",
+        polish: "你是中文小说润色编辑。基于整本小说的完整上下文与人物设定，请对给定正文进行润色：修正病句与错别字、提升描写质感与环境氛围、让对话更契合人物性格，但保持原意、情节、结构与人称完全不变。直接输出润色后的全文。",
+        expand: "你是中文小说扩写助手。基于整本小说的完整上下文与人物设定，请在不改变情节主干的前提下，将给定正文扩写得更丰满：补充环境氛围、心理活动、细节动作与人物神态对话。直接输出扩写后的全文。",
+      };
+      const TOKEN_LIMIT: Record<string, number> = { draft: 9000, continue: 5000, deslop: 6000, polish: 5000, expand: 7000 };
+      const mode = a.mode || "draft";
+      const systemPrompt = SYSTEM_PROMPTS[mode] || SYSTEM_PROMPTS.draft;
+      const contextParts: string[] = [];
+      contextParts.push(`【作品基础档案】\n- 书名：《${novel.title || ""}》\n- 类型：${novel.genre || "未设定"}\n- 简介：${novel.intro || "暂无"}`);
+      const outlines = db.prepare("SELECT title, content FROM outlines WHERE novel_id = ? AND chapter_id IS NULL ORDER BY sort_order ASC").all(a.novelId) as any[];
+      if (outlines.length) { contextParts.push(`【总大纲】\n${outlines.map((o: any, i: number) => `${i+1}. 【${o.title}】：${o.content}`).join("\n")}`); }
+      const chars = db.prepare("SELECT name, role, personality, background FROM characters WHERE novel_id = ? ORDER BY sort_order").all(a.novelId) as any[];
+      if (chars.length) { contextParts.push(`【人物设定】\n${chars.map((c: any) => `${c.name}（${c.role || "配角"}）：${c.personality || ""}${c.background ? " | " + c.background : ""}`).join("\n")}`); }
+      const ws = db.prepare("SELECT progress, foreshadowing FROM novel_writer_state WHERE novel_id = ?").get(a.novelId) as any;
+      if (ws?.progress) contextParts.push(`【创作进度】\n${ws.progress}`);
+      if (ws?.foreshadowing && ws.foreshadowing !== "[]") contextParts.push(`【伏笔清单】\n${ws.foreshadowing}`);
+      const chOutlines = db.prepare("SELECT title, content FROM outlines WHERE novel_id = ? AND chapter_id = ? ORDER BY sort_order").all(a.novelId, a.chapterId) as any[];
+      if (chOutlines.length) { contextParts.push(`【本章细纲】\n${chOutlines.map((o: any, i: number) => `${i+1}. 【${o.title}】：${o.content}`).join("\n")}`); }
+      const allChapters = db.prepare("SELECT id, title, content, word_count FROM chapters WHERE novel_id = ? ORDER BY sort_order").all(a.novelId) as any[];
+      const currentIdx = allChapters.findIndex((c: any) => c.id === a.chapterId);
+      const dirItems = allChapters.map((c: any, i: number) => `第${i+1}章《${c.title}》（${c.word_count || 0}字）${c.id === a.chapterId ? "【当前章】" : ""}`);
+      contextParts.push(`【章节目录】\n${dirItems.join("\n")}`);
+      if (currentIdx > 0) {
+        const prevCh = allChapters[currentIdx - 1];
+        const prevContent = String(prevCh.content || "");
+        const excerpt = prevContent.length > 2000 ? prevContent.slice(-2000) : prevContent;
+        contextParts.push(`【上一章结尾（${prevCh.title}）】\n${excerpt}`);
+      }
+      const currentContent = String(chapter.content || "");
+      if (["continue", "deslop", "polish", "expand"].includes(mode) && currentContent) {
+        contextParts.push(`【本章当前正文（待处理）】\n${currentContent}`);
+      }
+      if (a.extra) contextParts.push(`【附加要求】\n${a.extra}`);
+      const context = contextParts.join("\n\n");
+      let generated = "";
+      const rc = _agentRuntimeConfig;
+      await streamChat({
+        key: rc.key,
+        system: systemPrompt,
+        userPrompt: context,
+        maxTokens: TOKEN_LIMIT[mode] || 9000,
+        protocol: rc.protocol as any,
+        baseUrl: rc.baseUrl,
+        model: rc.model,
+        onDelta: (text: string) => { generated += text; },
+      });
+      if (!generated.trim()) throw new Error("AI 写作引擎未返回有效内容，请检查 API 配置");
+      if (chapter.content && chapter.content.trim()) {
+        saveChapterRevision(a.chapterId, `Agent ${mode} 前备份`, chapter.content, chapter.title);
+      }
+      db.prepare("UPDATE chapters SET content = ?, word_count = ?, updated_at = datetime('now') WHERE id = ?").run(generated, countChineseChars(generated), a.chapterId);
+      touchNovel(a.novelId);
+      try { indexOne(a.novelId, "chapter", a.chapterId); } catch { /* ignore */ }
+      return { ok: true, chapterId: a.chapterId, mode, wordCount: countChineseChars(generated), preview: generated.slice(0, 200) + (generated.length > 200 ? "..." : "") };
+    }
     default:
       throw new Error(`未知工具：${name}`);
   }
 }
 
-export const AGENT_SYSTEM_PROMPT = `你是「起笔」平台的"管家 Agent"，专为长篇小说创作提供自动化支持。
+export const AGENT_SYSTEM_PROMPT = `
+你是「起笔」平台的"管家 Agent"，专为长篇小说创作提供自动化支持。你拥有以下工具类别：
+
+【查询工具】list_novels / get_novel / list_chapters / get_chapter / list_outlines / list_characters / get_writer_state / get_character_states / list_volumes / kb_query / kb_stats
+
+【写作与精修工具（核心）】
+- ai_draft：调用起笔专业网文写作引擎生成/精修正文（强烈建议优先使用！支持 draft/continue/polish/expand/deslop 模式）
+- update_chapter：直接保存章节正文（ai_draft 会自动保存，通常无需额外调用）
+
+【创建工具】create_chapter / create_outline / create_character
+
+【修改工具】update_chapter / update_outline / update_character / update_writer_state / update_character_state / update_chapter_summary
+
+【知识库工具】kb_index_novel / kb_query
 
 【核心工作流程】
-1. 收到任务后，先简要陈述你理解的目标（1-2句话）
-2. 调用工具查阅必要上下文：
-   - 查看作品信息：get_novel
-   - 查看章节列表：list_chapters
-   - 查看创作进度：get_writer_state
-   - 查看人物设定：list_characters
-   - 查看大纲：list_outlines
-3. 基于查询结果制定具体执行计划
-4. 逐步执行写作/修改操作（create_outline / update_chapter / update_writer_state）
-5. 完成后明确告知用户：完成了什么、修改了哪些内容、字数统计
+1. 收到任务后，先简要陈述理解的目标（1-2句）
+2. 调用查询工具获取上下文（get_novel / list_chapters / list_outlines / list_characters / get_writer_state）
+3. 制定执行计划
+4. 执行写作/修改操作：
+   - 写新章节正文：先 create_chapter → 再调用 ai_draft（mode=draft） → 最后 update_chapter_summary
+   - 续写/润色/扩写：调用 ai_draft 对应模式（continue/polish/expand）
+   - 去AI味精修：调用 ai_draft（mode=deslop）
+   - 修改大纲：create_outline（新建）或 update_outline（修改已有）
+   - 更新人物：create_character（新建）或 update_character（修改设定卡）
+5. 完成后汇报：完成了什么、修改了哪些内容、新增字数
 
 【硬性规则】
-- 必须先调用工具获取上下文，不要凭空编造数据
+- 写章节正文必须优先使用 ai_draft，禁止直接在 update_chapter 的 content 字段里自行生成大段正文
 - 修改章节正文前必须先 get_chapter 拉取当前内容
 - 调用 update_chapter 时只传递需要修改的字段
 - 生成的正文必须符合中文网络小说规范（首行空两格、段落分明）
@@ -449,4 +592,5 @@ export const AGENT_SYSTEM_PROMPT = `你是「起笔」平台的"管家 Agent"，
 【输出要求】
 - 每一步思考都要用自然语言简要说明
 - 工具调用结果要做人类可读的总结
-- 最终回复要包含完成度、字数、下一步建议`;
+- 最终回复要包含完成度、字数、下一步建议
+`;

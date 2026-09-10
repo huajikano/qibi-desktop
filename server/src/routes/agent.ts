@@ -1,7 +1,7 @@
 import express, { Response } from "express";
 import { requireAuth, currentUser } from "../auth.js";
 import { db } from "../db.js";
-import { listAllTools, dispatchAgentTool, AGENT_SYSTEM_PROMPT, AGENT_TOOL_SPECS } from "../agent.js";
+import { listAllTools, dispatchAgentTool, AGENT_SYSTEM_PROMPT, AGENT_TOOL_SPECS, setAgentRuntimeConfig } from "../agent.js";
 import { chatWithTools, formatAiError } from "./ai.js";
 import { resolveAgentRuntimeConfig } from "./ai.js";
 import { buildSkillInjection } from "../skills.js";
@@ -42,6 +42,7 @@ router.post("/run", async (req, res) => {
   }
   // 用户明确配置了个人密钥/自定义端点时，严格优先使用用户端点与模型，绝不被站方默认变量覆盖
   const runtime = userRuntime;
+  setAgentRuntimeConfig(runtime);
 
   const tools = listAllTools(user.id, includeExternal !== false);
   const limit = Math.max(1, Math.min(20, Number(maxSteps) || 10));

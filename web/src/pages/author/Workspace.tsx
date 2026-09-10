@@ -1147,7 +1147,7 @@ const isReportMode = aiMode === "review" || aiMode === "analyze" || aiMode === "
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: agentTask.trim(), novelId, includeExternal: agentIncludeExternal, maxSteps: 8 }),
+        body: JSON.stringify({ task: agentTask.trim(), novelId, includeExternal: agentIncludeExternal, maxSteps: 12 }),
       });
       if (!res.ok) {
         const errText = await res.text();
