@@ -1,0 +1,82 @@
+{
+  "agent-continue": {
+    "chars": 115,
+    "sha256": "a3acd5c58f98df773a87e8891e400eafb52277556b81263a4e12c331adc89fbb",
+    "renderedEqualsSource": true
+  },
+  "agent-deslop": {
+    "chars": 210,
+    "sha256": "ed58fcf88dd4a7bdf5936740656a53069861209170ddb9822a179d1c33067378",
+    "renderedEqualsSource": true
+  },
+  "agent-draft": {
+    "chars": 187,
+    "sha256": "7ea5c3098788e05cef3add30d19c742ffe8e1546192b3ff086ca4ca1dc5787eb",
+    "renderedEqualsSource": true
+  },
+  "agent-expand": {
+    "chars": 90,
+    "sha256": "a290a558f15ec145bf50d5ae4932e306f574550ad2960106b6362fe85bf47985",
+    "renderedEqualsSource": true
+  },
+  "agent-polish": {
+    "chars": 102,
+    "sha256": "5963d2e49e544d727a8499f228994801fbdeb1634be06c6d910355ea1ad3a9f1",
+    "renderedEqualsSource": true
+  },
+  "agent-system": {
+    "chars": 1460,
+    "sha256": "2d8aea691a8a4fbd745bcb181914cfb8bb950f4de4c33119089b70371b296cd6",
+    "renderedEqualsSource": true
+  },
+  "ai-analyze": {
+    "chars": 215,
+    "sha256": "52693eea8b2bc4098711602ecca3bd1086fe34b91b6829565370e450138e4995",
+    "renderedEqualsSource": true
+  },
+  "ai-continue": {
+    "chars": 115,
+    "sha256": "a3acd5c58f98df773a87e8891e400eafb52277556b81263a4e12c331adc89fbb",
+    "renderedEqualsSource": true
+  },
+  "ai-deslop": {
+    "chars": 252,
+    "sha256": "14caa663ce85e9de2d5b6da2127042b36a885870dd5e2adad2b755bed9eaff5a",
+    "renderedEqualsSource": true
+  },
+  "ai-draft": {
+    "chars": 187,
+    "sha256": "7ea5c3098788e05cef3add30d19c742ffe8e1546192b3ff086ca4ca1dc5787eb",
+    "renderedEqualsSource": true
+  },
+  "ai-expand": {
+    "chars": 90,
+    "sha256": "a290a558f15ec145bf50d5ae4932e306f574550ad2960106b6362fe85bf47985",
+    "renderedEqualsSource": true
+  },
+  "ai-outline": {
+    "chars": 91,
+    "sha256": "ad03e89e60c582871d1acabddb2c2d19f43095099d6990910a703db6db47738d",
+    "renderedEqualsSource": true
+  },
+  "ai-polish": {
+    "chars": 102,
+    "sha256": "5963d2e49e544d727a8499f228994801fbdeb1634be06c6d910355ea1ad3a9f1",
+    "renderedEqualsSource": true
+  },
+  "ai-review": {
+    "chars": 249,
+    "sha256": "b67fa6549a2b192aef6cb9efc1bec6e0e96bdee62ed493a93a81f86bb7d3ce0e",
+    "renderedEqualsSource": true
+  },
+  "ai-suggest": {
+    "chars": 81,
+    "sha256": "85d17fbe1a8d38a12b56ec8110988538da0db7a8543d1b43043d87e7c65b2bfa",
+    "renderedEqualsSource": true
+  },
+  "ai-summary": {
+    "chars": 58,
+    "sha256": "d6b600b0847d93420b1996596c3e5fd5c4731167de31a9cccd14ea0c9bc8bb3e",
+    "renderedEqualsSource": true
+  }
+}
