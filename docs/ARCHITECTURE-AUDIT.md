@@ -40,7 +40,7 @@ web/dist（Vite 产物）由 Express 静态托管，前端同源调用 /api
 
 依赖方向：`routes → db / agent / mcp / skills`，`agent → db`，无循环依赖，但**没有领域层**——业务规则散在路由里。
 
-## 3. 提示词清点（全部 19 条）
+## 3. 提示词清点（全项目 26 条）
 
 改造前分布（`file:line`，字符数，SHA256 前 12 位）：
 
@@ -65,8 +65,17 @@ web/dist（Vite 产物）由 Express 静态托管，前端同源调用 /api
 | 17 | `server/src/mcp.ts:932` | deslop_text | 305 | `eeb39dd35599` | **含 `${a.text}` 插值** |
 | 18 | `mcp.ts:958` | review | 338 | `0699e332820b` | 含 `${a.chapterContent}` 插值 |
 | 19 | `mcp.ts:978` | analyze | 237 | `58e45349239f` | 含 `${a.text}` 插值 |
+| 20 | `server/src/routes/ai.ts:1345` | 章节 JSON 提炼 | 189 | `c6c498ff747a` | 唯一（`const system`，函数内） |
+| 21 | `server/src/routes/skillAuthors.ts:211` | 蒸馏·文风 system | 56 | `59f6a3a72523` | 唯一 |
+| 22 | `skillAuthors.ts:211` | 蒸馏·文风 user | 156 | `083363b815ac` | 唯一 |
+| 23 | `skillAuthors.ts:217` | 蒸馏·人格 system | 54 | `931d3b1685af` | 唯一 |
+| 24 | `skillAuthors.ts:217` | 蒸馏·人格 user | 130 | `5fd1a6a4d684` | 唯一 |
+| 25 | `skillAuthors.ts:223` | 蒸馏·合并 system | 73 | `2e5a5678df01` | 唯一 |
+| 26 | `skillAuthors.ts:223` | 蒸馏·合并 user | 187 | `e695166acd8b` | 唯一 |
 
-**重复结论**：19 条中有 4 对逐字节重复（8 条实为 4 条），deslop 存在 2 个近似版本，mcp 3 条是「正文 + 插值」的混合体。合计重复正文约 494 字符；真正的维护风险不在字节数，而在于**改一处忘另一处**（`ai.ts` 与 `agent.ts` 分别维护）。
+> **清点口径修正**：首轮清点（仅扫描顶层 `SYSTEM_PROMPTS` 对象与特定变量名）漏掉了 #20–#26 共 7 条——它们分别是函数体内的 `const system = "..."` 与 `run(label, system, user, maxTokens)` 调用的内联参数。改用「全量字符串字面量 + 提示词特征词」扫描后才补全。这是本次审计的过程缺陷，已保留记录。
+
+**重复结论**：26 条中有 4 对逐字节重复（8 条实为 4 条），deslop 存在 2 个近似版本（252/210），mcp 3 条是「正文 + 插值」混合体。合计重复正文约 494 字符；真正风险是**改一处忘另一处**。
 
 ## 4. 硬编码配置清点
 
@@ -107,3 +116,14 @@ web/dist（Vite 产物）由 Express 静态托管，前端同源调用 /api
 - 未做真实模型端到端回归（无 API key）：`baseline/` 仅含固定输入与提示词渲染快照。
 - 未审计前端渲染性能与打包体积构成。
 - 未做安全审计（会话、越权、密钥加密仅按代码阅读判断）。
+
+## 8. 审计过程缺陷记录
+
+首轮提示词清点只覆盖了 `SYSTEM_PROMPTS` 对象字面量与 `AGENT_SYSTEM_PROMPT` 常量，遗漏 7 条：
+
+- `server/src/routes/ai.ts:1345`（函数内 `const system = "..."`）
+- `server/src/routes/skillAuthors.ts:211/217/223`（`run(label, system, user, maxTokens)` 的内联参数，每组 system + user 两条）
+
+发现方式：迁移完成后用「长度 ≥ 80 的字符串字面量 + 提示词特征词（你是/请你/请根据/请将/你的任务）」全量扫描 `server/src`，命中 18 处（含 16 条已外置的生成物），据此定位缺口。
+
+教训：**按变量名清点必然漏**；提示词清点应以「全量字符串字面量 + 语义特征」为准，并与「是否含变量插值」交叉判定。该缺陷导致本次外置覆盖率为 16/26（61.5%），而非最初以为的 16/19。
