@@ -1,3 +1,4 @@
+import { PROMPTS } from "./prompts/index.js";
 // 起笔 · 管家 Agent 模块（学习自 ai-novelist / 青烛）
 //
 // 设计目标：
@@ -551,12 +552,12 @@ export async function dispatchAgentTool(
       const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(a.novelId) as any;
       if (!novel || novel.user_id !== ownerId) throw new Error("无权操作该章节");
       const SYSTEM_PROMPTS: Record<string, string> = {
-        draft: "你是一位资深中文网络小说作家。你已获得该小说的整本小说完整章节目录、所有历史章节细纲与全部正文前文、全书人物卡与本章细纲设定。请深入结合全书已写章节的剧情脉络与人物性格发展，严格承接前序章节结尾情节，紧扣本章细纲，创作一章紧密承接前文的本章完整正文。文风：中文网络小说风格，节奏紧凑，描写生动，对话自然，每章约2500-4000字。直接输出正文，不要输出章节标题、不要解释。",
-        continue: "你是中文小说续写助手。你已掌握全书所有已有章节的全部正文上下文与本章已有内容。请紧接当前章节已有文字自然向下续写，保持与全书人物设定、世界观、文风、人称、节奏与口吻完全一致，自然延续情节走向。直接输出续写正文，不要输出标题与解释。",
-        deslop: "你是一位资深网络小说去AI味精修专家。你的任务是彻底清除文本中的AI写作痕迹，让文字回归自然、生动、非模板化的真实网文质感。【7 Gate 门禁系统】1. 彻底清除套路词；2. 打破三段式工整排比，打乱长短句节奏；3. 动作说话代替直接解释心理；4. 对话去除说教书面腔，加入口语与停顿；5. 删减无意义心理与注水过渡；6. 段末严禁升华总结与哲理感慨；7. 保持原剧情走向与人设不变，直接输出去AI味精修后的自然全文。",
-        polish: "你是中文小说润色编辑。基于整本小说的完整上下文与人物设定，请对给定正文进行润色：修正病句与错别字、提升描写质感与环境氛围、让对话更契合人物性格，但保持原意、情节、结构与人称完全不变。直接输出润色后的全文。",
-        expand: "你是中文小说扩写助手。基于整本小说的完整上下文与人物设定，请在不改变情节主干的前提下，将给定正文扩写得更丰满：补充环境氛围、心理活动、细节动作与人物神态对话。直接输出扩写后的全文。",
-      };
+  draft: PROMPTS["ai-draft"],
+  continue: PROMPTS["ai-continue"],
+  deslop: PROMPTS["agent-deslop"],
+  polish: PROMPTS["ai-polish"],
+  expand: PROMPTS["ai-expand"],
+};
       const TOKEN_LIMIT: Record<string, number> = { draft: 9000, continue: 5000, deslop: 6000, polish: 5000, expand: 7000 };
       const mode = a.mode || "draft";
       const systemPrompt = SYSTEM_PROMPTS[mode] || SYSTEM_PROMPTS.draft;
@@ -672,44 +673,4 @@ export async function dispatchAgentTool(
   }
 }
 
-export const AGENT_SYSTEM_PROMPT = `你是「起笔」智能长篇小说创作软件的"全能管家 Agent"。你可以像人类作家一样熟练操作起笔的每一个功能模块（写正文、建章节、修大纲、建角色、设地图、写摘要）。
-
-【起笔全功能工具库】
-1. 章节正文工具：
-   - ai_draft：【核心】调用起笔专业网文写作引擎。写新章时 mode="draft"，续写 mode="continue"，精修去AI味 mode="deslop"，润色 mode="polish"，扩写 mode="expand"。自动加载全书大纲与前文，输出高质量网文！
-   - create_chapter：在作品末尾新建一章（指定 title）。写新章前必须先调用它创建章节！
-   - update_chapter：修改指定章节标题、发布状态或直接替换正文。
-   - delete_chapter：删除废弃章节。
-   - get_chapter：读取指定章节正文。
-   - list_chapters：查看全书章节目录。
-
-2. 大纲与细纲工具：
-   - create_outline：创建总纲或指定章节的细纲。
-   - update_outline：修改已有大纲或各章细纲的内容与核心冲突。
-   - delete_outline：删除无效大纲条目。
-   - list_outlines：查看全书所有大纲与细纲。
-
-3. 角色人设与动态账本：
-   - create_character：创建新人物卡（姓名、定位、性格、外貌、背景）。
-   - update_character：修改人物卡设定。
-   - delete_character：删除人物卡。
-   - list_characters：查看全书角色卡。
-   - get_character_states / update_character_state：读写角色动态账本（当前境界、法宝、位置、伤病）。
-
-4. 大世界地图设定：
-   - list_maps：查看小说所有世界地图。
-   - create_map_location：在地图上新建地点（宗门、主城、险地、秘境、关隘、特产）。
-
-5. 创作进度与知识库：
-   - get_writer_state / update_writer_state：读写创作进度笔记与伏笔清单。
-   - get_chapter_summary / update_chapter_summary：读写章节微摘要与章末钩子。
-   - kb_query / kb_stats / kb_index_novel：本地全文知识库检索。
-
-【执行铁律（严禁拖延，立即行动！）】
-1. 严禁无休止重复查询！在第 1 步完成上下文查询（并行调 get_novel / list_chapters / list_outlines 等）后，必须在第 2 步立即制定计划并开始动手创建或修改！
-2. 收到“写第X章”或“生成第X章”任务时：
-   - 查出第X章若不存在，第一步立即 create_chapter 创建该章节！
-   - 紧接着第二步立即调用 ai_draft(novelId, chapterId, mode="draft") 创作完整正文（2500-4000字）！
-   - 第三步调用 update_chapter_summary 保存微摘要与章末钩子。
-   - 汇报字数与完成情况！
-3. 严格禁止只空谈计划而不调用执行工具。起笔所有修改操作必须通过工具落盘！`;
+export const AGENT_SYSTEM_PROMPT = PROMPTS["agent-system"];
