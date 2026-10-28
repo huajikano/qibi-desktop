@@ -15,7 +15,11 @@
     "start": "npm run start -w server",
     "prod": "npm run build && npm run start",
     "build:exe": "npm run build -w web && npm run dist -w desktop",
-    "build:server-exe": "npm run build -w web && npm run dist:server -w desktop"
+    "build:server-exe": "npm run build -w web && npm run dist:server -w desktop",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:prompts": "node --import tsx --test tests/prompts.test.ts",
+    "prompts:build": "node scripts/build-prompts.mjs",
+    "prompts:check": "node scripts/build-prompts.mjs --check"
   },
   "allowScripts": {
     "esbuild@0.24.2": true,
