@@ -52,8 +52,10 @@ prompts:check OK
 | `npm run build -w web` | exit 0 |
 | `npm run build -w server` | exit 0 |
 | `electron-builder --win --x64 --publish never` | exit 0 |
-| 产物 | `起笔-1.2.5-portable.exe`（大小与 SHA256 见 §7） |
-| 冒烟 | 进程存活、窗口正常、`/api/health` 返回 `{"ok":true}` |
+| 产物 | `起笔-1.2.5-portable.exe`，**91,341,714 字节**，SHA256 `A0838016C7571083290C6822F6A5E2EBEA8D4918C1C3C3A97382C4BBA51657D2` |
+| `app.asar` | 4,335,603 字节（含 `generated.ts` 提示词注册表） |
+| 提示词是否进产物 | 是。`asar` 内 `ai-draft` 键出现 3 次；中文因 esbuild ASCII 输出为 `\uXXXX` 转义（直接搜中文会误判为缺失） |
+| 冒烟 | 5 进程存活；窗口「起笔 · 小说创作平台」；端口 64958；`/api/health` = `{"ok":true,"time":"2026-10-28T18:08:58.240Z"}`；首页 HTTP 200 / 883 B |
 | 生成结果语义 | **无变化**：提示词逐字符一致，调用参数与协议解析未改动 |
 
 ## 5. 未落地项与路线图
