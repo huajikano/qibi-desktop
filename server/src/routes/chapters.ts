@@ -91,6 +91,26 @@ router.patch("/chapters/:id", ownsChapter, async (req, res) => {
   res.json({ ok: true, chapter });
 });
 
+// 正文专用保存通道：text/plain 直传，避开 JSON 转义与 2MB 请求体限制，
+// 让整本粘贴进单个章节的用户也能正常保存（上限 200 万字）。
+router.patch("/chapters/:id/content", ownsChapter, express.text({ type: "text/plain", limit: "16mb" }), async (req, res) => {
+  const id = Number(req.params.id);
+  const content = typeof req.body === "string" ? req.body : "";
+  if (content.length > 2_000_000) {
+    return res.status(400).json({ error: "单章字数超限（上限 200 万字），请拆分章节后再保存" });
+  }
+  db.prepare("UPDATE chapters SET content = ?, word_count = ?, updated_at = datetime('now') WHERE id = ?").run(
+    content,
+    countChineseChars(content),
+    id
+  );
+  const chapter = db.prepare("SELECT * FROM chapters WHERE id = ?").get(id) as any;
+  if (!chapter) return res.status(404).json({ error: "章节不存在" });
+  touchNovel(chapter.novel_id);
+  try { const { indexOne } = await import("../kb.js"); indexOne(chapter.novel_id, "chapter", id); } catch { /* ignore */ }
+  res.json({ ok: true, chapter });
+});
+
 // 上移/下移：按照当前章节列表的实际顺序进行交换，并彻底规避 sort_order 重复或断号
 router.post("/chapters/:id/move", ownsChapter, (req, res) => {
   const id = Number(req.params.id);

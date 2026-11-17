@@ -298,6 +298,88 @@ export const AGENT_TOOL_SPECS: AgentToolSpec[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "create_chapter",
+    description: "在指定作品下新建章节，默认追加到目录末尾。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        novelId: { type: "number", description: "小说 ID" },
+        title: { type: "string", description: "章节标题" },
+      },
+      required: ["novelId", "title"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "update_outline",
+    description: "修改已有总纲或章节细纲条目的标题与内容。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        outlineId: { type: "number", description: "大纲条目 ID" },
+        title: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["outlineId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "create_character",
+    description: "为指定作品新建角色卡。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        novelId: { type: "number" },
+        name: { type: "string", description: "角色姓名" },
+        role: { type: "string", description: "主角 / 主要配角 / 反派 / 次要角色 / 路人" },
+        gender: { type: "string" },
+        age: { type: "string" },
+        appearance: { type: "string" },
+        personality: { type: "string" },
+        background: { type: "string" },
+      },
+      required: ["novelId", "name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "update_character",
+    description: "修改已有角色卡的字段（姓名、别名、身份、性别、年龄、外貌、性格、背景）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        characterId: { type: "number" },
+        name: { type: "string" },
+        alias: { type: "string" },
+        role: { type: "string" },
+        gender: { type: "string" },
+        age: { type: "string" },
+        appearance: { type: "string" },
+        personality: { type: "string" },
+        background: { type: "string" },
+      },
+      required: ["characterId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ai_draft",
+    description:
+      "调用内置写作引擎处理指定章节正文：draft=按细纲生成整章、continue=承接现有正文续写并追加、deslop/polish/expand=整章去AI味/润色/扩写。会覆盖本章正文，旧正文自动备份到历史版本。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        novelId: { type: "number" },
+        chapterId: { type: "number" },
+        mode: { type: "string", enum: ["draft", "continue", "deslop", "polish", "expand"] },
+        extra: { type: "string", description: "附加创作要求（可选）" },
+      },
+      required: ["novelId", "chapterId"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 export function listAllTools(ownerId: number, includeExternal: boolean): AgentToolSpec[] {
@@ -312,6 +394,24 @@ export function listAllTools(ownerId: number, includeExternal: boolean): AgentTo
     }
   }
   return specs;
+}
+
+// Agent 工具统一归属校验：模型可以自由生成 novelId / chapterId，绝不能只凭 ID 读写
+function assertNovelOwner(ownerId: number, novelIdRaw: unknown): any {
+  const novelId = Number(novelIdRaw);
+  if (!Number.isInteger(novelId) || novelId <= 0) throw new Error("作品 ID 无效");
+  const novel = db.prepare("SELECT * FROM novels WHERE id = ?").get(novelId) as any;
+  if (!novel) throw new Error("作品不存在");
+  if (novel.user_id !== ownerId) throw new Error("无权访问该作品");
+  return novel;
+}
+
+function assertChapterOwner(ownerId: number, chapterIdRaw: unknown): any {
+  const chapter = db.prepare("SELECT * FROM chapters WHERE id = ?").get(Number(chapterIdRaw)) as any;
+  if (!chapter) throw new Error("章节不存在");
+  const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(chapter.novel_id) as any;
+  if (!novel || novel.user_id !== ownerId) throw new Error("无权访问该章节");
+  return chapter;
 }
 
 export async function dispatchAgentTool(
@@ -329,6 +429,7 @@ export async function dispatchAgentTool(
   const a = args || {};
   switch (name) {
     case "get_chapter_summary": {
+      assertChapterOwner(ownerId, a.chapterId);
       const row = db.prepare("SELECT * FROM chapter_summaries WHERE chapter_id = ?").get(a.chapterId) as any;
       if (!row) return { chapterId: a.chapterId, summary: "本章暂未提炼摘要" };
       return row;
@@ -364,6 +465,8 @@ export async function dispatchAgentTool(
     case "update_character_state": {
       const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(a.novelId) as any;
       if (!novel || novel.user_id !== ownerId) throw new Error("无权访问该作品");
+      const character = db.prepare("SELECT novel_id FROM characters WHERE id = ?").get(a.characterId) as any;
+      if (!character || character.novel_id !== Number(a.novelId)) throw new Error("角色与作品不匹配");
 
       const typeData = typeof a.typeSpecificData === "string" ? a.typeSpecificData : JSON.stringify(a.typeSpecificData || {});
 
@@ -408,20 +511,14 @@ export async function dispatchAgentTool(
       return { ...row, chapters, characters, outlineCount };
     }
     case "list_chapters": {
-      return db.prepare("SELECT id, title, status, word_count, sort_order FROM chapters WHERE novel_id = ? ORDER BY sort_order").all(a.novelId);
+      assertNovelOwner(ownerId, a.novelId);
+      return db.prepare("SELECT id, title, status, word_count, sort_order FROM chapters WHERE novel_id = ? ORDER BY sort_order").all(Number(a.novelId));
     }
     case "get_chapter": {
-      const row = db.prepare("SELECT * FROM chapters WHERE id = ?").get(a.chapterId) as any;
-      if (!row) throw new Error("章节不存在");
-      const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(row.novel_id) as any;
-      if (!novel || novel.user_id !== ownerId) throw new Error("无权访问该章节");
-      return row;
+      return assertChapterOwner(ownerId, a.chapterId);
     }
     case "update_chapter": {
-      const ch = db.prepare("SELECT * FROM chapters WHERE id = ?").get(a.chapterId) as any;
-      if (!ch) throw new Error("章节不存在");
-      const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(ch.novel_id) as any;
-      if (!novel || novel.user_id !== ownerId) throw new Error("无权操作该章节");
+      const ch = assertChapterOwner(ownerId, a.chapterId);
       const fields: string[] = [];
       const vals: any[] = [];
       if (typeof a.title === "string") { fields.push("title = ?"); vals.push(a.title); }
@@ -438,9 +535,10 @@ export async function dispatchAgentTool(
       return { ok: true, chapter: db.prepare("SELECT * FROM chapters WHERE id = ?").get(a.chapterId) };
     }
     case "list_outlines": {
+      assertNovelOwner(ownerId, a.novelId);
       return db.prepare(
         "SELECT id, title, content, chapter_id, sort_order FROM outlines WHERE novel_id = ? ORDER BY chapter_id NULLS FIRST, sort_order"
-      ).all(a.novelId);
+      ).all(Number(a.novelId));
     }
     case "create_outline": {
       const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(a.novelId) as any;
@@ -451,38 +549,45 @@ export async function dispatchAgentTool(
       return db.prepare("SELECT * FROM outlines WHERE id = ?").get(info.lastInsertRowid);
     }
     case "list_characters": {
-      return db.prepare("SELECT id, name, role, gender, age, alias, personality, appearance FROM characters WHERE novel_id = ? ORDER BY sort_order").all(a.novelId);
+      assertNovelOwner(ownerId, a.novelId);
+      return db.prepare("SELECT id, name, role, gender, age, alias, personality, appearance FROM characters WHERE novel_id = ? ORDER BY sort_order").all(Number(a.novelId));
     }
     case "get_writer_state": {
+      assertNovelOwner(ownerId, a.novelId);
       const row = db.prepare("SELECT * FROM novel_writer_state WHERE novel_id = ?").get(a.novelId);
       return row || { novel_id: a.novelId, progress: "", foreshadowing: "[]", distilled_author_id: null };
     }
     case "update_writer_state": {
+      const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(a.novelId) as any;
+      if (!novel || novel.user_id !== ownerId) throw new Error("无权操作该作品");
       const fields: string[] = [];
       const vals: any[] = [];
       if (typeof a.progress === "string") { fields.push("progress = ?"); vals.push(a.progress); }
       if (typeof a.foreshadowing === "string") { fields.push("foreshadowing = ?"); vals.push(a.foreshadowing); }
       if (!fields.length) throw new Error("无更新字段");
-      const existing = db.prepare("SELECT novel_id FROM novel_writer_state WHERE novel_id = ?").get(a.novelId);
+      const existing = db.prepare("SELECT novel_id FROM novel_writer_state WHERE novel_id = ? AND user_id = ?").get(a.novelId, ownerId);
       if (existing) {
-        vals.push(a.novelId);
-        db.prepare(`UPDATE novel_writer_state SET ${fields.join(", ")} WHERE novel_id = ?`).run(...vals);
+        vals.push(a.novelId, ownerId);
+        db.prepare(`UPDATE novel_writer_state SET ${fields.join(", ")}, updated_at = datetime('now') WHERE novel_id = ? AND user_id = ?`).run(...vals);
       } else {
-        vals.unshift(a.novelId);
-        db.prepare(`INSERT INTO novel_writer_state (novel_id, ${fields.map((f) => f.split(" ")[0]).join(", ")}) VALUES (${new Array(fields.length + 1).fill("?").join(", ")})`).run(...vals);
+        vals.unshift(a.novelId, ownerId);
+        db.prepare(`INSERT INTO novel_writer_state (novel_id, user_id, ${fields.map((f) => f.split(" ")[0]).join(", ")}) VALUES (${new Array(fields.length + 2).fill("?").join(", ")})`).run(...vals);
       }
       return db.prepare("SELECT * FROM novel_writer_state WHERE novel_id = ?").get(a.novelId);
     }
     case "kb_index_novel": {
-      const r = kbIndexNovel(a.novelId);
+      assertNovelOwner(ownerId, a.novelId);
+      const r = kbIndexNovel(Number(a.novelId));
       return { ok: true, ...r };
     }
     case "kb_query": {
-      const hits = kbQuery(a.novelId, a.q, Math.max(1, Math.min(20, Number(a.limit) || 5)));
+      assertNovelOwner(ownerId, a.novelId);
+      const hits = kbQuery(Number(a.novelId), a.q, Math.max(1, Math.min(20, Number(a.limit) || 5)));
       return hits.map((h) => ({ source_kind: h.source_kind, title: h.title, score: Number(h.score.toFixed(3)), preview: h.content.slice(0, 280) }));
     }
     case "kb_stats": {
-      return kbGetStats(a.novelId);
+      assertNovelOwner(ownerId, a.novelId);
+      return kbGetStats(Number(a.novelId));
     }
     case "create_chapter": {
       const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(a.novelId) as any;
@@ -547,10 +652,9 @@ export async function dispatchAgentTool(
     }
     case "ai_draft": {
       if (!runtimeConfig) throw new Error("Agent 写作引擎未初始化，请重试或检查 API 配置");
-      const chapter = db.prepare("SELECT * FROM chapters WHERE id = ?").get(a.chapterId) as any;
-      if (!chapter) throw new Error("章节不存在");
-      const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(a.novelId) as any;
-      if (!novel || novel.user_id !== ownerId) throw new Error("无权操作该章节");
+      const novel = assertNovelOwner(ownerId, a.novelId);
+      const chapter = assertChapterOwner(ownerId, a.chapterId);
+      if (chapter.novel_id !== Number(a.novelId)) throw new Error("章节与作品不匹配");
       const SYSTEM_PROMPTS: Record<string, string> = {
   draft: PROMPTS["ai-draft"],
   continue: PROMPTS["ai-continue"],
@@ -604,10 +708,12 @@ export async function dispatchAgentTool(
       if (chapter.content && chapter.content.trim()) {
         saveChapterRevision(a.chapterId, `Agent ${mode} 前备份`, chapter.content, chapter.title);
       }
-      db.prepare("UPDATE chapters SET content = ?, word_count = ?, updated_at = datetime('now') WHERE id = ?").run(generated, countChineseChars(generated), a.chapterId);
+      // 续写只产出新增片段，必须追加到原文；其余模式是整章替换
+      const newContent = mode === "continue" && chapter.content ? chapter.content + "\n" + generated : generated;
+      db.prepare("UPDATE chapters SET content = ?, word_count = ?, updated_at = datetime('now') WHERE id = ?").run(newContent, countChineseChars(newContent), a.chapterId);
       touchNovel(a.novelId);
       try { indexOne(a.novelId, "chapter", a.chapterId); } catch { /* ignore */ }
-      return { ok: true, chapterId: a.chapterId, mode, wordCount: countChineseChars(generated), preview: generated.slice(0, 200) + (generated.length > 200 ? "..." : "") };
+      return { ok: true, chapterId: a.chapterId, mode, wordCount: countChineseChars(newContent), preview: generated.slice(0, 200) + (generated.length > 200 ? "..." : "") };
     }
     case "list_maps": {
       const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(a.novelId) as any;
@@ -639,7 +745,7 @@ export async function dispatchAgentTool(
       nodes.push(newLoc);
       mapData.nodes = nodes;
 
-      db.prepare("UPDATE maps SET data = ?, updated_at = datetime(now) WHERE id = ?")
+      db.prepare("UPDATE maps SET data = ?, updated_at = datetime('now') WHERE id = ?")
         .run(JSON.stringify(mapData), a.mapId);
       return { ok: true, location: newLoc };
     }

@@ -6,6 +6,9 @@ import type { AiProtocol, AiSettings } from "../types";
 
 type Msg = { kind: "ok" | "err"; text: string } | null;
 
+// MCP stdio 入口位于源码目录下，不能写死某台机器的绝对路径
+const MCP_CLI_COMMAND = 'claude mcp add novelforge node "<项目根目录>\\mcp\\server.mjs"';
+
 
 const PROMPT_ROLES = [
   { id: "draft", name: "生成正文 (Draft)", badge: "✍️ 正文草稿", desc: "根据前文剧情、设定与本章细纲创作本章完整正文" },
@@ -773,18 +776,18 @@ export default function Settings() {
                     <Terminal size={14} className="text-primary-2" />
                     Claude Code / CLI 接入
                   </span>
-                  <span className="text-[10px] text-ink-3">Stdio 模式 (.mcp.json 已内置)</span>
+                  <span className="text-[10px] text-ink-3">Stdio 模式（源码目录）</span>
                 </div>
-                <p className="text-ink-3 text-[11px]">终端一键添加命令：</p>
+                <p className="text-ink-3 text-[11px]">终端一键添加命令（把 &lt;项目根目录&gt; 换成本机源码目录）：</p>
                 <div className="flex items-center justify-between rounded bg-surface px-2.5 py-1.5 font-mono text-[11px] text-ink-2 border border-border">
-                  <span className="truncate">claude mcp add novelforge node "C:\Users\Administrator\Desktop\xm\XXS\mcp\server.mjs"</span>
+                  <span className="truncate">{MCP_CLI_COMMAND}</span>
                   <button
                     type="button"
                     className="ml-2 rounded p-1 hover:text-primary-2 shrink-0"
-                    onClick={(e) => { e.stopPropagation(); copyToClipboard('claude mcp add novelforge node "C:\\Users\\Administrator\\Desktop\\xm\\XXS\\mcp\\server.mjs"'); }}
+                    onClick={(e) => { e.stopPropagation(); copyToClipboard(MCP_CLI_COMMAND); }}
                     title="复制命令"
                   >
-                    {copiedUrl === 'claude mcp add novelforge node "C:\\Users\\Administrator\\Desktop\\xm\\XXS\\mcp\\server.mjs"' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                    {copiedUrl === MCP_CLI_COMMAND ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
                   </button>
                 </div>
               </div>

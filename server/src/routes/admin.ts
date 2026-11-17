@@ -32,7 +32,6 @@ router.patch("/users/:id", (req, res) => {
     vals.push(n.disabled ? 1 : 0);
   }
   if (fields.length) {
-    fields.push("updated_at = datetime('now')");
     vals.push(id);
     db.prepare(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
   }

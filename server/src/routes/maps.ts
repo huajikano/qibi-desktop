@@ -88,7 +88,7 @@ router.post("/novels/:novelId/maps/:mapId/ai-enrich", ownsNovel, async (req, res
     return res.status(400).json({ error: "未配置 AI 密钥，请前往「设置」配置「角色与地图」或「小说写作助手」API Key" });
   }
 
-  const novel = db.prepare("SELECT title, genre, summary FROM novels WHERE id = ?").get(novelId) as any;
+  const novel = db.prepare("SELECT title, genre, intro FROM novels WHERE id = ?").get(novelId) as any;
   const chapters = db
     .prepare("SELECT id, title, content FROM chapters WHERE novel_id = ? AND length(trim(content)) > 0 ORDER BY sort_order ASC, id ASC LIMIT 20")
     .all(novelId) as Array<{ id: number; title: string; content: string }>;

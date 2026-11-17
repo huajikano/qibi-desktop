@@ -96,7 +96,7 @@ router.post("/novels/:novelId/characters/ai-extract", ownsNovel, async (req, res
     return res.status(400).json({ error: "当前小说暂无正文内容可供分析，请先在写作台创建并填写章节正文。" });
   }
 
-  const novel = db.prepare("SELECT title, genre, summary FROM novels WHERE id = ?").get(novelId) as any;
+  const novel = db.prepare("SELECT title, genre, intro FROM novels WHERE id = ?").get(novelId) as any;
   const combinedText = chapters
     .map((c, i) => `【第${i + 1}章：${c.title}】\n${c.content.slice(0, 3500)}`)
     .join("\n\n");
@@ -206,7 +206,7 @@ router.post("/novels/:novelId/characters/batch-import", ownsNovel, (req, res) =>
       appearance = CASE WHEN ? != '' THEN ? ELSE appearance END,
       personality = CASE WHEN ? != '' THEN ? ELSE personality END,
       background = CASE WHEN ? != '' THEN ? ELSE background END,
-      relationships = ?,
+      relationships = CASE WHEN ? != '[]' THEN ? ELSE relationships END,
       updated_at = datetime('now')
     WHERE id = ?
   `);
@@ -228,7 +228,7 @@ router.post("/novels/:novelId/characters/batch-import", ownsNovel, (req, res) =>
         c.appearance || "", c.appearance || "",
         c.personality || "", c.personality || "",
         c.background || "", c.background || "",
-        rels,
+        rels, rels,
         existId
       );
       updated++;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
+import CodeMirror, { ExternalChange, type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import {
@@ -9,7 +9,7 @@ import {
   History, Undo2, Copy, Scissors, Clock, Check, BookOpen, FileText, Globe, Lock, Terminal, PlayCircle,
   Bookmark, Search, Bell,
 } from "lucide-react";
-import { api, aiStream, ApiError, readSseEvents, skillAuthorApi, ssePost, writerStateApi, chapterRevisionApi } from "../../api";
+import { api, aiStream, ApiError, readSseEvents, saveChapterContent, skillAuthorApi, ssePost, writerStateApi, chapterRevisionApi } from "../../api";
 import type { ChapterRevision } from "../../types";
 import { PromptDialog } from "../../components/Dialog";
 import type { Chapter, Character, DistilledAuthor, Novel, NovelWriterState, Outline } from "../../types";
@@ -108,11 +108,17 @@ export default function Workspace() {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [content, setContent] = useState("");
+  // 仅用于「外部内容」写入编辑器（切章、AI 生成、恢复版本）；用户输入不回写这个值，
+  // 避免受控 value 落后于编辑器文档时把最后几个字符冲掉。
+  const [editorSeed, setEditorSeed] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const activeIdRef = useRef<number | null>(null);
   const outlineSavedRef = useRef(new Map<number, string>());
+  const chapterTitleSavedRef = useRef(new Map<number, string>());
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const saveCountRef = useRef(0);
   const [outlineErrors, setOutlineErrors] = useState<Record<number, string>>({});
   const [outlineSaving, setOutlineSaving] = useState<Record<number, boolean>>({});
   const [newChapterOpen, setNewChapterOpen] = useState(false);
@@ -413,6 +419,13 @@ export default function Workspace() {
   };
 
   const saveTimer = useRef<number | null>(null);
+  // 切换章节 / 外部写稿前必须取消防抖保存，否则旧定时器会拿新章节的文档去覆盖旧章节
+  const cancelPendingSave = () => {
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+  };
 
   const scrollEditorToBottom = useCallback(() => {
     const scroller = editorHostRef.current?.querySelector<HTMLElement>(".cm-scroller");
@@ -429,6 +442,19 @@ export default function Workspace() {
     }
   }, []);
 
+  // 外部内容写入编辑器：标记 ExternalChange，既不会触发 onChange，也不会被自动保存截断
+  const applyDoc = useCallback((text: string) => {
+    const view = editorViewRef.current;
+    if (view && view.state.doc.toString() !== text) {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: text },
+        annotations: ExternalChange.of(true),
+        scrollIntoView: false,
+      });
+    }
+    setContent(text);
+  }, []);
+
   const load = useCallback(async (preferredId?: number | null) => {
     const [n, cs, os, chs] = await Promise.all([
       api.get<Novel>(`/novels/${novelId}`),
@@ -441,6 +467,7 @@ export default function Workspace() {
     setOutlines(os);
     setCharacters(chs || []);
     outlineSavedRef.current = new Map(os.map((o) => [o.id, o.content]));
+    chapterTitleSavedRef.current = new Map(cs.map((c) => [c.id, c.title]));
 
     // 优先读取记忆的上次激活章节，无记录时若有章节默认选中第1章或最新章
     const savedLastId = getLastActiveChapterId(novelId);
@@ -453,18 +480,24 @@ export default function Workspace() {
           : cs[0]?.id ?? null;
 
     if (nextId !== null) {
-      setActiveId(nextId);
-      activeIdRef.current = nextId;
-      setLastActiveChapterId(novelId, nextId);
+      let nextContent = "";
       try {
-        const c = await api.get<Chapter>(`/chapters/${nextId}`);
-        setContent(c.content);
+        nextContent = (await api.get<Chapter>(`/chapters/${nextId}`)).content;
       } catch {
         /* ignore */
       }
+      cancelPendingSave();
+      setActiveId(nextId);
+      activeIdRef.current = nextId;
+      setLastActiveChapterId(novelId, nextId);
+      setEditorSeed(nextContent);
+      setContent(nextContent);
+      setDirty(false);
     } else {
       setActiveId(null);
+      setEditorSeed("");
       setContent("");
+      setDirty(false);
     }
   }, [novelId]);
 
@@ -474,12 +507,20 @@ export default function Workspace() {
 
   const selectChapter = async (chapterId: number) => {
     if (dirty) await saveNow();
+    cancelPendingSave();
+    let text = "";
+    try {
+      text = (await api.get<Chapter>(`/chapters/${chapterId}`)).content;
+    } catch {
+      return;
+    }
     setActiveId(chapterId);
     activeIdRef.current = chapterId;
     setLastActiveChapterId(novelId, chapterId);
     setMobileTab("editor");
-    const c = await api.get<Chapter>(`/chapters/${chapterId}`);
-    setContent(c.content);
+    setEditorSeed(text);
+    setContent(text);
+    setDirty(false);
   };
 
   // AI 自动生成正文期间实时平滑跟踪视口至最新生成位置
@@ -491,23 +532,40 @@ export default function Workspace() {
 
   const saveNow = useCallback(async () => {
     if (activeId === null) return;
+    // 防止切换章节后由旧渲染留下的定时器仍然拿当前编辑器文档覆盖旧章节
+    if (activeIdRef.current !== activeId) return;
+    const chapterId = activeId;
+    // 以编辑器实时文档为准：高频输入 / 中文输入法组合时 React state 可能落后一两个字符
+    const text = editorViewRef.current ? editorViewRef.current.state.doc.toString() : content;
+    saveCountRef.current += 1;
     setSaving(true);
-    try {
-      await api.patch(`/chapters/${activeId}`, { content });
-      setDirty(false);
-      setChapters((cs) =>
-        cs.map((c) =>
-          c.id === activeId
-            ? { ...c, word_count: (content.match(/[一-鿿]/g) || []).length }
-            : c
-        )
-      );
-    } catch {
-      /* ignore */
-    } finally {
-      setSaving(false);
-    }
-  }, [activeId, content]);
+    const doSave = async () => {
+      try {
+        const saved = await saveChapterContent(chapterId, text);
+        const latest = editorViewRef.current ? editorViewRef.current.state.doc.toString() : text;
+        // 保存期间用户又改了字，则不能清 dirty，否则界面会误显示“已保存”
+        if (activeIdRef.current === chapterId && latest === text) {
+          setContent(text);
+          setDirty(false);
+        }
+        setChapters((cs) =>
+          cs.map((c) =>
+            c.id === chapterId
+              ? { ...c, word_count: saved.word_count, status: saved.status }
+              : c
+          )
+        );
+      } catch (err: any) {
+        pushToast(`保存失败：${err?.message || "请重试"}`, "warn");
+      } finally {
+        saveCountRef.current -= 1;
+        if (saveCountRef.current === 0) setSaving(false);
+      }
+    };
+    // 串行化保存请求：自动保存与手动保存并发时，后发请求可能先落库，导致丢字
+    saveChainRef.current = saveChainRef.current.then(doSave, doSave);
+    await saveChainRef.current;
+  }, [activeId, content, pushToast]);
 
   const onChange = (v: string) => {
     setContent(v);
@@ -550,11 +608,15 @@ export default function Workspace() {
     if (!confirm(`确定将正文恢复至版本「${rev.reason}」（${rev.created_at}）？
 当前正文会自动存为新快照。`) ) return;
     try {
+      // 先把编辑器里的最新正文落库，确保服务端的“恢复前备份”包含未保存的修改
+      if (dirty) await saveNow();
+      cancelPendingSave();
       const res = await chapterRevisionApi.restore(activeId, rev.id);
-      setContent(res.content);
+      setEditorSeed(res.chapter.content);
+      applyDoc(res.chapter.content);
       setDirty(false);
       setLastBackupNotice("已恢复至版本：" + rev.reason);
-      setChapters((cs) => cs.map((c) => c.id === activeId ? { ...c, word_count: res.word_count } : c));
+      setChapters((cs) => cs.map((c) => c.id === activeId ? { ...c, word_count: res.chapter.word_count } : c));
       await loadRevisions(activeId);
     } catch (err: any) {
       alert(err.message || "恢复版本失败");
@@ -583,11 +645,16 @@ export default function Workspace() {
   const addChapter = async (title: string) => {
     setNewChapterSaving(true);
     setNewChapterError("");
+    if (dirty) await saveNow();
+    cancelPendingSave();
     try {
       const created = await api.post<Chapter>(`/novels/${novelId}/chapters`, { title });
       setChapters((cs) => [...cs, created]);
+      chapterTitleSavedRef.current.set(created.id, created.title);
       setActiveId(created.id);
       activeIdRef.current = created.id;
+      setLastActiveChapterId(novelId, created.id);
+      setEditorSeed(created.content || "");
       setContent(created.content || "");
       setDirty(false);
       setNewChapterOpen(false);
@@ -598,24 +665,37 @@ export default function Workspace() {
     }
   };
 
+  // 只同步被修改的章节字段，避免整页重载把编辑器里尚未保存的正文冲掉
   const updateChapter = async (chapterId: number, patch: Partial<Chapter>) => {
     await api.patch(`/chapters/${chapterId}`, patch);
-    await load();
+    setChapters((cs) => cs.map((c) => (c.id === chapterId ? { ...c, ...patch } : c)));
   };
 
   const moveChapter = async (chapterId: number, dir: "up" | "down") => {
     await api.post(`/chapters/${chapterId}/move`, { dir });
-    await load();
+    setChapters(await api.get<Chapter[]>(`/novels/${novelId}/chapters`));
   };
 
   const removeChapter = async (chapterId: number) => {
     if (!confirm("确定删除该章节？（其细纲将一并删除）")) return;
     await api.del(`/chapters/${chapterId}`);
+    const remaining = await api.get<Chapter[]>(`/novels/${novelId}/chapters`);
+    setChapters(remaining);
+    chapterTitleSavedRef.current.delete(chapterId);
     if (activeId === chapterId) {
-      setActiveId(null);
-      setContent("");
+      cancelPendingSave();
+      const nextId = remaining[0]?.id ?? null;
+      let nextContent = "";
+      if (nextId !== null) {
+        try { nextContent = (await api.get<Chapter>(`/chapters/${nextId}`)).content; } catch { /* ignore */ }
+      }
+      setActiveId(nextId);
+      activeIdRef.current = nextId;
+      setLastActiveChapterId(novelId, nextId);
+      setEditorSeed(nextContent);
+      setContent(nextContent);
+      setDirty(false);
     }
-    await load();
   };
 
   const openOutlineDialog = (chapterId: number | null) => {
@@ -661,7 +741,8 @@ export default function Workspace() {
   const removeOutline = async (oid: number) => {
     if (!confirm("确定删除该大纲条目？")) return;
     await api.del(`/outlines/${oid}`);
-    await load();
+    outlineSavedRef.current.delete(oid);
+    setOutlines((os) => os.filter((o) => o.id !== oid));
   };
 
   // ---- AI ----
@@ -707,7 +788,7 @@ export default function Workspace() {
           role: "suggest",
           novelId,
           chapterId: activeId,
-          content,
+          content: editorViewRef.current ? editorViewRef.current.state.doc.toString() : content,
           save: false,
           extra: assistantExtra,
           prompt: `${taskHint}\n\n只输出${fieldLabel}正文，不要加解释、不要用代码块。`,
@@ -733,6 +814,9 @@ export default function Workspace() {
   const runAI = async (overrideMode?: AiMode) => {
     if (!activeId || aiBusy) return;
     const mode = overrideMode ?? aiModeRef.current;
+    // AI 之前先落库当前正文：服务端的“生成前备份”读取的是数据库内容
+    if (dirty) await saveNow();
+    cancelPendingSave();
     setAiBusy(true);
     setAiError("");
     setSelectionError("");
@@ -763,8 +847,9 @@ export default function Workspace() {
         return;
       }
       const isDraftLike = mode === "draft" || mode === "continue" || mode === "deslop" || mode === "expand" || mode === "polish";
+      const currentDoc = editorViewRef.current ? editorViewRef.current.state.doc.toString() : content;
       if (isDraftLike) {
-        const originalContent = content;
+        const originalContent = currentDoc;
         let streamed = "";
         const prompt = mode === "draft"
           ? "请深入结合全书已写各章节的前文剧情脉络与人物发展，紧扣本章细纲，创作本章完整正文。"
@@ -777,33 +862,31 @@ export default function Workspace() {
           : "请紧密承接前文与本章已有正文，结合全书所有章节剧情与设定，自然续写（只需输出新增的续写内容）。";
         await aiStream("/ai/run", {
           role: mode, novelId, chapterId: activeId,
-          content: mode === "continue" || mode === "deslop" || mode === "polish" || mode === "expand" ? content : undefined,
+          content: mode === "continue" || mode === "deslop" || mode === "polish" || mode === "expand" ? currentDoc : undefined,
           extra: assistantExtra, save: true,
           prompt,
         }, (text) => {
           streamed += text;
-          if (mode === "continue") {
-            setContent(originalContent + (originalContent ? "\n" : "") + streamed);
-          } else {
-            setContent(streamed);
-          }
+          const full = mode === "continue"
+            ? originalContent + (originalContent ? "\n" : "") + streamed
+            : streamed;
+          applyDoc(full);
           scrollEditorToBottom();
         });
         if (mode === "continue") {
-          // AI 续写只产出新内容；服务端已把续写单独保存，需把前文与续写拼回一章，避免覆盖原文
+          // 服务端已把续写追加到原文并保存，这里只同步最新正文，避免二次拼接
           const saved = await api.get<Chapter>(`/chapters/${activeId}`);
-          const finalContent = originalContent + (originalContent ? "\n" : "") + saved.content.trimEnd();
-          if (saved.content.trim() && finalContent !== saved.content) {
-            setContent(finalContent);
-            await api.patch(`/chapters/${activeId}`, { content: finalContent });
-            const updated = await api.get<Chapter>(`/chapters/${activeId}`);
-            setChapters((cs) => cs.map((c) => c.id === activeId ? { ...c, word_count: updated.word_count, status: updated.status } : c));
-          }
+          setEditorSeed(saved.content);
+          applyDoc(saved.content);
+          setChapters((cs) => cs.map((c) => c.id === activeId ? { ...c, word_count: saved.word_count, status: saved.status } : c));
           setDirty(false);
           setLastBackupNotice("AI 续写已完成，原正文已自动存入历史版本。");
         } else {
           const saved = await api.get<Chapter>(`/chapters/${activeId}`);
-          setContent(saved.content); setDirty(false); setLastBackupNotice(`AI 已生成新正文，原正文已自动存入历史版本。`);
+          setEditorSeed(saved.content);
+          applyDoc(saved.content);
+          setDirty(false);
+          setLastBackupNotice(`AI 已生成新正文，原正文已自动存入历史版本。`);
           setChapters((cs) => cs.map((c) => c.id === activeId ? { ...c, word_count: saved.word_count, status: saved.status } : c));
         }
       } else {
@@ -817,7 +900,7 @@ export default function Workspace() {
           ? "基于当前进度，为接下来的章节生成细纲建议。"
           : "请针对下面【补充要求】中作者提出的创作问题，给出专业、具体、前后严谨一致的可执行建议。";
         let streamed = "";
-        await aiStream("/ai/run", { role: mode, novelId, chapterId: activeId, content, extra: assistantExtra, prompt: defaultPrompt }, (text) => {
+        await aiStream("/ai/run", { role: mode, novelId, chapterId: activeId, content: currentDoc, extra: assistantExtra, prompt: defaultPrompt }, (text) => {
           streamed += text;
           setAiReport(streamed);
         });
@@ -832,12 +915,13 @@ const saveReportAsOutline = async (asChapter: boolean) => {
     const text = aiReport.trim();
     if (!text) return;
     try {
-      await api.post<Outline>(`/novels/${novelId}/outlines`, {
+      const created = await api.post<Outline>(`/novels/${novelId}/outlines`, {
         title: `AI${asChapter ? " 本章" : " 分卷总纲"}规划 · ${new Date().toLocaleDateString()}`,
         content: text,
         chapter_id: asChapter && activeId ? activeId : null,
       });
-      await load();
+      outlineSavedRef.current.set(created.id, created.content);
+      setOutlines((os) => [...os, created]);
       setOutlineSavedMsg(asChapter ? "已保存为本章细纲 ✓" : "已保存为作品总纲 ✓");
     } catch (err: any) {
       setOutlineSavedMsg(err?.message || "保存失败，请重试");
@@ -1139,6 +1223,9 @@ const isReportMode = aiMode === "review" || aiMode === "analyze" || aiMode === "
 
   const runAgent = async () => {
     if (!agentTask.trim() || agentBusy) return;
+    // Agent 结束后会整页刷新；先把编辑器里的未保存正文落库，避免被旧数据覆盖
+    if (dirty) await saveNow();
+    cancelPendingSave();
     setAgentBusy(true);
     setAgentLog([]);
     try {
@@ -1250,7 +1337,12 @@ const isReportMode = aiMode === "review" || aiMode === "analyze" || aiMode === "
           >
             <BookOpen size={13} /> <span className="hidden sm:inline">知识库</span>
           </button>
-          <button className="btn-primary !min-h-8 !px-2.5 text-xs shrink-0" onClick={() => void saveNow()} disabled={!dirty && !saving}>
+          <button
+            className="btn-primary !min-h-8 !px-2.5 text-xs shrink-0"
+            onClick={() => void saveNow()}
+            disabled={!activeId || saving}
+            title="把当前编辑器里的完整正文保存到本地数据库"
+          >
             <Save size={13} /> {saving ? "保存中…" : dirty ? "保存" : "已保存"}
           </button>
           <button
@@ -1752,14 +1844,28 @@ const isReportMode = aiMode === "review" || aiMode === "analyze" || aiMode === "
                   value={activeChapter.title}
                   onChange={(e) => setChapters((cs) => cs.map((c) => (c.id === activeChapter.id ? { ...c, title: e.target.value } : c)))}
                   onBlur={(e) => {
-                    if (e.target.value !== activeChapter.title) void updateChapter(activeChapter.id, { title: e.target.value });
+                    const id = activeChapter.id;
+                    const savedTitle = chapterTitleSavedRef.current.get(id) ?? "";
+                    const next = e.target.value.trim();
+                    if (!next) {
+                      setChapters((cs) => cs.map((c) => (c.id === id ? { ...c, title: savedTitle } : c)));
+                      return;
+                    }
+                    if (next === savedTitle) return;
+                    chapterTitleSavedRef.current.set(id, next);
+                    setChapters((cs) => cs.map((c) => (c.id === id ? { ...c, title: next } : c)));
+                    void updateChapter(id, { title: next }).catch((err: any) => {
+                      chapterTitleSavedRef.current.set(id, savedTitle);
+                      setChapters((cs) => cs.map((c) => (c.id === id ? { ...c, title: savedTitle } : c)));
+                      pushToast(err?.message || "章节标题保存失败", "warn");
+                    });
                   }}
                   aria-label="章节标题"
                 />
                 <select
                   className="shrink-0 rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-2 transition-colors hover:border-primary-2/40 focus:border-primary-2 focus:outline-none"
                   value={activeChapter.status}
-                  onChange={(e) => void updateChapter(activeChapter.id, { status: e.target.value })}
+                  onChange={(e) => void updateChapter(activeChapter.id, { status: e.target.value }).catch((err: any) => pushToast(err?.message || "章节状态保存失败", "warn"))}
                 >
                   {STATUSES.map((s) => (
                     <option key={s}>{s}</option>
@@ -1792,8 +1898,9 @@ const isReportMode = aiMode === "review" || aiMode === "analyze" || aiMode === "
                 }}
               >
                 <CodeMirror
+                  key={activeId ?? "editor"}
                   ref={cmRef}
-                  value={content}
+                  value={editorSeed}
                   onCreateEditor={(view) => { editorViewRef.current = view; }}
                   onUpdate={(update: ViewUpdate) => {
                     if (update.selectionSet || update.docChanged) editorViewRef.current = update.view;

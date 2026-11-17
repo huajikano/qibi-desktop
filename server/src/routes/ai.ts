@@ -406,7 +406,15 @@ function scopedRuntimeConfig(resolved: ResolvedKey, req: Request, user: any, sco
     return buildRuntimeConfig(resolved.key, "station", BASE_URL || "https://api.anthropic.com", BASE_URL.endsWith("/v1") ? "openai" : "anthropic", MODEL);
   }
   if (resolved.source === "writer-session" || resolved.source === "writer-db") {
-    return buildRuntimeConfig(resolved.key, resolved.source === "writer-session" ? "session" : "user-db", req.session.userApiBaseUrl || user.ai_api_base_url, req.session.userApiProtocol || user.ai_api_protocol, req.session.userApiModel || user.ai_api_model);
+    // 会话模式保存的端点字段名为 userApiKeyBaseUrl，需优先读取，避免回落站方默认端点
+    const s = req.session;
+    return buildRuntimeConfig(
+      resolved.key,
+      resolved.source === "writer-session" ? "session" : "user-db",
+      s.userApiKeyBaseUrl || s.userApiBaseUrl || user.ai_api_base_url,
+      s.userApiKeyProtocol || s.userApiProtocol || user.ai_api_protocol,
+      s.userApiKeyModel || s.userApiModel || user.ai_api_model
+    );
   }
   const field = SCOPE_FIELD[scope];
   const session = req.session as any;
@@ -437,6 +445,16 @@ function ensureChapterAccess(req: Request, user: any): any {
   const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(novelId) as { user_id: number } | undefined;
   if (!novel || (novel.user_id !== user.id && user.role !== "admin")) throw Object.assign(new Error("无权操作该章节"), { status: 403 });
   return chapter;
+}
+
+// /million/* 等按作品维度操作的接口统一走这里，避免只凭 novelId 就能读写他人作品
+function ensureNovelAccess(user: any, novelIdRaw: unknown): number {
+  const novelId = Number(novelIdRaw);
+  if (!Number.isInteger(novelId) || novelId <= 0) throw Object.assign(new Error("作品 ID 无效"), { status: 400 });
+  const novel = db.prepare("SELECT user_id FROM novels WHERE id = ?").get(novelId) as { user_id: number } | undefined;
+  if (!novel) throw Object.assign(new Error("作品不存在"), { status: 404 });
+  if (novel.user_id !== user.id && user.role !== "admin") throw Object.assign(new Error("无权操作该作品"), { status: 403 });
+  return novelId;
 }
 
 // ---- AI
@@ -825,7 +843,7 @@ router.post("/run", async (req, res) => {
     return res.status(err.status || 400).json({ error: err.message });
   }
   const role = (req.body?.role || "draft") as Role;
-  if (!(role in SYSTEM_PROMPTS)) return res.status(400).json({ error: "未知能力" });
+  if (!Object.hasOwn(SYSTEM_PROMPTS, role)) return res.status(400).json({ error: "未知能力" });
   const runtime = resolveRuntimeConfig(req, user);
   if (!runtime) {
     return res.status(400).json({ error: "未配置小说写作助手 API 密钥：请在「设置」->「小说写作助手」中填写完整的 API 配置，或联系管理员启用站方配置" });
@@ -905,7 +923,8 @@ router.post("/run", async (req, res) => {
           };
           saveChapterRevision(chapterId, reasonMap[role] || "AI生成前备份", chapter.content, chapter.title);
         }
-        const newContent = generated;
+        // 续写只产出新增片段，必须追加到原文；其余角色是整章替换
+        const newContent = role === "continue" && chapter.content ? chapter.content + "\n" + generated : generated;
         db.prepare("UPDATE chapters SET content = ?, word_count = ?, updated_at = datetime('now') WHERE id = ?").run(
           newContent,
           countChineseChars(newContent),
@@ -968,10 +987,10 @@ router.get("/settings", (req, res) => {
   const agentConfig = {
     keyConfigured: agentSource !== "none",
     keySource: agentSource,
-    baseUrl: req.session.agentApiBaseUrl || user.agent_api_base_url || null,
-    protocol: validProtocol(req.session.agentApiProtocol || user.agent_api_protocol),
-    model: req.session.agentApiModel || user.agent_api_model || null,
-    isSeparate: !!(req.session.agentApiKey || user.agent_api_key_enabled || req.session.agentApiBaseUrl || user.agent_api_base_url || req.session.agentApiModel || user.agent_api_model),
+    baseUrl: req.session.agentApiKeyBaseUrl || req.session.agentApiBaseUrl || user.agent_api_base_url || null,
+    protocol: validProtocol(req.session.agentApiKeyProtocol || req.session.agentApiProtocol || user.agent_api_protocol),
+    model: req.session.agentApiKeyModel || req.session.agentApiModel || user.agent_api_model || null,
+    isSeparate: !!(req.session.agentApiKey || user.agent_api_key_enabled || req.session.agentApiKeyBaseUrl || req.session.agentApiBaseUrl || user.agent_api_base_url || req.session.agentApiKeyModel || req.session.agentApiModel || user.agent_api_model),
   };
 
   // 设定库（角色与地图）配置
@@ -985,32 +1004,33 @@ router.get("/settings", (req, res) => {
   const writerConfig = {
     keyConfigured: writerSource !== "none",
     keySource: writerSource,
-    baseUrl: req.session.userApiBaseUrl || user.ai_api_base_url || null,
-    protocol: validProtocol(req.session.userApiProtocol || user.ai_api_protocol),
-    model: req.session.userApiModel || user.ai_api_model || null,
+    baseUrl: req.session.userApiKeyBaseUrl || req.session.userApiBaseUrl || user.ai_api_base_url || null,
+    protocol: validProtocol(req.session.userApiKeyProtocol || req.session.userApiProtocol || user.ai_api_protocol),
+    model: req.session.userApiKeyModel || req.session.userApiModel || user.ai_api_model || null,
   };
 
   const distillConfig = {
     keyConfigured: distillSource !== "none",
     keySource: distillSource,
-    baseUrl: req.session.distillApiBaseUrl || user.distill_api_base_url || null,
-    protocol: validProtocol(req.session.distillApiProtocol || user.distill_api_protocol),
-    model: req.session.distillApiModel || user.distill_api_model || null,
+    baseUrl: req.session.distillApiKeyBaseUrl || req.session.distillApiBaseUrl || user.distill_api_base_url || null,
+    protocol: validProtocol(req.session.distillApiKeyProtocol || req.session.distillApiProtocol || user.distill_api_protocol),
+    model: req.session.distillApiKeyModel || req.session.distillApiModel || user.distill_api_model || null,
   };
 
   const worldConfig = {
     keyConfigured: worldSource !== "none",
     keySource: worldSource,
     isDedicated: !!(req.session.worldApiKey || user.world_api_key_enabled),
-    baseUrl: req.session.worldApiBaseUrl || user.world_api_base_url || null,
-    protocol: validProtocol(req.session.worldApiProtocol || user.world_api_protocol),
-    model: req.session.worldApiModel || user.world_api_model || null,
+    baseUrl: req.session.worldApiKeyBaseUrl || req.session.worldApiBaseUrl || user.world_api_base_url || null,
+    protocol: validProtocol(req.session.worldApiKeyProtocol || req.session.worldApiProtocol || user.world_api_protocol),
+    model: req.session.worldApiKeyModel || req.session.worldApiModel || user.world_api_model || null,
   };
 
   res.json({
     writer: writerConfig,
     distill: distillConfig,
     world: worldConfig,
+    agent: agentConfig,
     stationConfigured: !!station,
     // 向后兼容旧前端字段
     keyConfigured: writerConfig.keyConfigured,
@@ -1384,7 +1404,8 @@ router.post("/million/summarize-chapter", async (req, res) => {
 router.get("/million/character-states/:novelId", (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: "请先登录" });
-  const novelId = Number(req.params.novelId);
+  let novelId: number;
+  try { novelId = ensureNovelAccess(user, req.params.novelId); } catch (err: any) { return res.status(err.status || 400).json({ error: err.message }); }
   const rows = db.prepare(`
     SELECT cs.*, c.name, c.role, c.alias
     FROM characters c
@@ -1400,6 +1421,9 @@ router.post("/million/character-states", (req, res) => {
   if (!user) return res.status(401).json({ error: "请先登录" });
   const { characterId, novelId, currentLocation, currentRealm, inventory, statusEffects, notes } = req.body || {};
   if (!characterId || !novelId) return res.status(400).json({ error: "缺少参数" });
+  try { ensureNovelAccess(user, novelId); } catch (err: any) { return res.status(err.status || 400).json({ error: err.message }); }
+  const character = db.prepare("SELECT novel_id FROM characters WHERE id = ?").get(Number(characterId)) as { novel_id: number } | undefined;
+  if (!character || character.novel_id !== Number(novelId)) return res.status(400).json({ error: "角色与作品不匹配" });
 
   db.prepare(`
     INSERT INTO character_states (character_id, novel_id, current_location, current_realm, inventory, status_effects, notes, updated_at)
@@ -1420,7 +1444,8 @@ router.post("/million/character-states", (req, res) => {
 router.get("/million/volumes/:novelId", (req, res) => {
   const user = currentUser(req);
   if (!user) return res.status(401).json({ error: "请先登录" });
-  const novelId = Number(req.params.novelId);
+  let novelId: number;
+  try { novelId = ensureNovelAccess(user, req.params.novelId); } catch (err: any) { return res.status(err.status || 400).json({ error: err.message }); }
   const rows = db.prepare("SELECT * FROM volumes WHERE novel_id = ? ORDER BY sort_order ASC, id ASC").all(novelId);
   res.json({ volumes: rows });
 });
@@ -1430,6 +1455,7 @@ router.post("/million/volumes", (req, res) => {
   if (!user) return res.status(401).json({ error: "请先登录" });
   const { novelId, title, summary, coreConflict, sortOrder } = req.body || {};
   if (!novelId || !title) return res.status(400).json({ error: "缺少作品 ID 或分卷标题" });
+  try { ensureNovelAccess(user, novelId); } catch (err: any) { return res.status(err.status || 400).json({ error: err.message }); }
   const info = db.prepare("INSERT INTO volumes (novel_id, title, summary, core_conflict, sort_order) VALUES (?, ?, ?, ?, ?)").run(
     novelId,
     String(title).trim(),

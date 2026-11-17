@@ -1,4 +1,5 @@
 import type {
+  Chapter,
   DistilledAuthor,
   DistilledAuthorDetail,
   DistilledAuthorSource,
@@ -42,6 +43,28 @@ export const api = {
   patch: <T>(url: string, body?: unknown) => request<T>("PATCH", url, body),
   del: <T>(url: string) => request<T>("DELETE", url),
 };
+
+// 章节正文专用保存：text/plain 直传，避免大段正文走 JSON 转义与 2MB 请求体限制
+export async function saveChapterContent(chapterId: number, content: string): Promise<Chapter> {
+  const res = await fetch(`/api/chapters/${chapterId}/content`, {
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: content,
+  });
+  if (!res.ok) {
+    let msg = `正文保存失败 (${res.status})`;
+    try {
+      const j = await res.json();
+      if (j?.error) msg = j.error;
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(res.status, msg);
+  }
+  const payload = (await res.json()) as { ok: boolean; chapter: Chapter };
+  return payload.chapter;
+}
 
 // AI 流式请求（SSE）
 // SSE 流通用读取器：按空行切事件，解析 data:（可多行）/ event: 字段，逐事件回调。
@@ -242,7 +265,7 @@ export const chapterRevisionApi = {
   create: (chapterId: number, data: { title?: string; content?: string; reason?: string }) =>
     api.post<import("./types").ChapterRevision>(`/chapters/${chapterId}/revisions`, data),
   restore: (chapterId: number, revisionId: number) =>
-    api.post<{ ok: boolean; title: string; content: string; word_count: number }>(`/chapters/${chapterId}/revisions/${revisionId}/restore`),
+    api.post<{ ok: boolean; chapter: import("./types").Chapter }>(`/chapters/${chapterId}/revisions/${revisionId}/restore`),
 };
 
 
