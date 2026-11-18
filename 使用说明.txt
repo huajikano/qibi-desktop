@@ -20,8 +20,8 @@
 二、本地启动与打包
 ------------------
 
-项目目录：
-C:\Users\Administrator\Desktop\xm\XXS
+项目目录（以下用 <项目根目录> 代替你的实际路径）：
+<项目根目录>
 
 首次安装依赖：
     npm install
@@ -29,7 +29,7 @@ C:\Users\Administrator\Desktop\xm\XXS
 开发模式需要打开两个终端：
 
 终端一（后端 API）：
-    cd /d C:\Users\Administrator\Desktop\xm\XXS
+    cd /d <项目根目录>
     npm run dev:server
 
 后端地址：
@@ -38,7 +38,7 @@ C:\Users\Administrator\Desktop\xm\XXS
     http://localhost:3000/api/health
 
 终端二（前端）：
-    cd /d C:\Users\Administrator\Desktop\xm\XXS
+    cd /d <项目根目录>
     npm run dev:web
 
 前端地址：
@@ -47,11 +47,12 @@ C:\Users\Administrator\Desktop\xm\XXS
 生产打包为 Windows 便携版 EXE：
     1. 打包本地单机写作版客户端 EXE：
        npm run build:exe
-       生成：desktop/release/起笔-1.0.0-portable.exe
+       生成：desktop/release/起笔-1.2.6-portable.exe
 
     2. 打包公网服务器图形化一体版 EXE（直接接入公网）：
        npm run build:server-exe
-       生成：desktop/release/起笔-公网服务器-1.0.0-portable.exe
+       生成：desktop/release/起笔-公网服务器-1.2.6-portable.exe
+       （打包前请把 cloudflared-windows-amd64.exe 放到 desktop/ 目录，该文件不提交到仓库）
 
        ★ 【起笔-公网服务器.exe】特性：
        - 双击直接启动本地全能服务（0.0.0.0 监听）并自动集成 Cloudflare 全球公网隧道。
@@ -171,7 +172,7 @@ AI 设置入口：登录后进入“设置”。系统已将【小说写作助�
 ------------------
 
 - 生产环境请使用随机且足够长的 SESSION_SECRET。
-- 数据库位于 server/data/，升级前请备份 novelforge.db。
+- 开发模式数据库默认位于 server/data/（以启动日志与设置页显示为准），升级前请备份 novelforge.db。
 - 不要提交 server/.env 到公开仓库。
 - 不要在日志中打印 Authorization、x-api-key 或解密后的密钥。
 - AI 请求由后端代理发出，浏览器不会直接获得服务端站方密钥。
@@ -189,7 +190,8 @@ AI 设置入口：登录后进入“设置”。系统已将【小说写作助�
 
 2. 一键启动方式（Windows）
 - 在项目根目录下，直接双击运行：
-  `启动服务器(公网与局域网模式).bat`
+- 推荐方式：执行 `npm run build:server-exe`，然后双击 `desktop/release/起笔-公网服务器-1.2.6-portable.exe`。
+  仓库中不包含 `启动服务器(公网与局域网模式).bat`，请勿按旧文档寻找该文件。
 - 脚本会自动检查环境并完成前后端编译，并在命令行中清晰打印：
   * 本机电脑访问地址：`http://localhost:3000`
   * 局域网/手机访问地址：`http://192.168.x.x:3000`（根据当前电脑连接的 WiFi/路由器 IP 动态显示）

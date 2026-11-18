@@ -1,5 +1,8 @@
 export type AiProtocol = "auto" | "anthropic" | "openai";
 
+// 思考强度：auto 表示不下发参数；Anthropic 映射 output_config.effort，OpenAI 兼容映射 reasoning_effort
+export type ThinkingLevel = "auto" | "low" | "medium" | "high" | "xhigh";
+
 export interface AiConfigGroup {
   keyConfigured: boolean;
   keySource: "none" | "session" | "user-db" | "station" | "writer-session" | "writer-db";
@@ -7,6 +10,7 @@ export interface AiConfigGroup {
   baseUrl: string | null;
   protocol: AiProtocol;
   model: string | null;
+  thinking?: ThinkingLevel;
 }
 
 export interface AiSettings {
@@ -19,6 +23,7 @@ export interface AiSettings {
   baseUrl: string | null;
   protocol: AiProtocol;
   model: string | null;
+  thinking?: ThinkingLevel;
   stationConfigured: boolean;
 }
 export interface User {

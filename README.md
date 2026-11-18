@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-1.2.6-blue" />
+  <img alt="version" src="https://img.shields.io/badge/version-1.2.7-blue" />
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%20x64-lightgrey" />
   <img alt="node" src="https://img.shields.io/badge/node-%3E%3D24-brightgreen" />
@@ -85,10 +85,11 @@
 
 | 产物 | 说明 |
 |---|---|
-| `起笔-1.2.6-portable.exe` | 单机写作版，双击启动 |
-| `起笔-公网服务器-1.2.6-portable.exe` | 公网多作者版，内置 Cloudflare 隧道控制台 |
+| `起笔-1.2.7-portable.exe` | 单机写作版，双击启动 |
+| `起笔-公网服务器-1.2.7-portable.exe` | 公网多作者版，内置 Cloudflare 隧道控制台 |
 
-> 无需安装 Node.js、无需数据库服务。数据存于 `%APPDATA%\起笔\data\`。
+> 无需安装 Node.js、无需数据库服务。数据存于 `%APPDATA%\desktop\data\`。
+> GitHub 上传时会自动去掉资产名的中文前缀，下载页实际显示为 `-1.2.7-portable.exe`。
 
 **首次进入**：默认管理员 `admin` / `admin123456`，**请立即修改密码**。
 
@@ -261,11 +262,11 @@ npm run build
 
 # 单机写作版便携 EXE
 npm run build:exe
-# → desktop/release/起笔-1.2.6-portable.exe
+# → desktop/release/起笔-1.2.7-portable.exe
 
 # 公网服务器版便携 EXE（内置 Cloudflare 隧道）
 npm run build:server-exe
-# → desktop/release/起笔-公网服务器-1.2.6-portable.exe
+# → desktop/release/起笔-公网服务器-1.2.7-portable.exe
 ```
 
 **公网服务器版**特性：
@@ -353,7 +354,7 @@ Base URL 填成了官网地址。需填实际接口地址，如 `http://127.0.0.
 需先用鼠标选中文本；未选中时保留浏览器原生菜单。
 
 **Q：数据存在哪？**
-桌面版：`%APPDATA%\起笔\data\novelforge.db`；服务器版：优先 `E:\起笔-公网服务器数据\data\`，无 E 盘则 D 盘，可由 `DATA_DIR` 覆盖。删除前请先备份。
+桌面版：`%APPDATA%\desktop\data\novelforge.db`；服务器版：优先 `E:\起笔-公网服务器数据\data\`，无 E 盘则 D 盘，可由 `DATA_DIR` 覆盖。删除前请先备份。
 
 ---
 

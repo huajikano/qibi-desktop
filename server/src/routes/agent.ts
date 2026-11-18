@@ -117,10 +117,11 @@ router.post("/run", async (req, res) => {
         system: systemPrompt,
         messages,
         tools,
-        maxTokens: 4000,
+        maxTokens: 8000,
         protocol: runtime.protocol as any,
         baseUrl: runtime.baseUrl,
         model: runtime.model,
+        thinking: runtime.thinking as any,
         signal: ac.signal,
       });
 
@@ -138,16 +139,24 @@ router.post("/run", async (req, res) => {
       }
 
       // 把 assistant 完整内容（包含 tool_use 块）回填给 messages
-      const assistantBlocks: any[] = [];
-      if (result.text) assistantBlocks.push({ type: "text", text: result.text });
+      // Anthropic 协议必须原样回传 thinking/tool_use 块（含 signature），否则下一轮会被拒或丢失推理连续性
+      const rawBlocks = Array.isArray(result.contentBlocks) && result.contentBlocks.length > 0
+        ? result.contentBlocks
+        : null;
+      const assistantBlocks: any[] = rawBlocks ? rawBlocks : [];
+      if (!rawBlocks) {
+        if (result.text) assistantBlocks.push({ type: "text", text: result.text });
+        for (let i = 0; i < result.toolCalls.length; i++) {
+          const c = result.toolCalls[i];
+          assistantBlocks.push({ type: "tool_use", id: c.id || `toolu_${Date.now()}_${step}_${i}`, name: c.name, input: c.args });
+        }
+      }
 
-      // 为每个 tool call 生成唯一 ID
+      // 为每个 tool call 生成唯一 ID（与回填的 assistant 块保持一致）
       const toolUseIds: string[] = [];
       for (let i = 0; i < result.toolCalls.length; i++) {
         const c = result.toolCalls[i];
-        const toolId = c.id || `toolu_${Date.now()}_${step}_${i}`;
-        toolUseIds.push(toolId);
-        assistantBlocks.push({ type: "tool_use", id: toolId, name: c.name, input: c.args });
+        toolUseIds.push(c.id || `toolu_${Date.now()}_${step}_${i}`);
       }
       messages.push({ role: "assistant", content: assistantBlocks });
 

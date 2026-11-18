@@ -26,9 +26,9 @@ npm run build -w server
 npm run build:exe
 ```
 
-`npm run build:exe` builds the frontend, bundles the server, and creates `desktop/release/起笔-1.0.0-portable.exe`.
+`npm run build:exe` builds the frontend, bundles the server, and creates `desktop/release/起笔-1.2.6-portable.exe`.
 
-There is no configured test suite. Use the TypeScript builds as the baseline verification, then manually exercise authentication, chapter/outline persistence, AI SSE output, file import, and the Electron portable build when changing those paths.
+There is a prompt-only test suite: `npm test` (6 cases) and `npm run test:prompts`. Broader routes/SSE/DB/frontend coverage is still manual: use the TypeScript builds plus manual checks of authentication, chapter/outline persistence, AI SSE output, file import, and the Electron portable build.
 
 ## Important implementation details
 

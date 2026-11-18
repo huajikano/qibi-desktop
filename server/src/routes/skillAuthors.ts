@@ -197,6 +197,7 @@ async function generateDistillation(req: Request, res: Response, author: AuthorR
       protocol: runtime.protocol,
       baseUrl: runtime.baseUrl,
       model: runtime.model,
+      thinking: runtime.thinking,
       signal: undefined,
       onDelta: (text) => {
         output += text;

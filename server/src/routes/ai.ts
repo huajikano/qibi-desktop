@@ -33,6 +33,68 @@ function normalizeBaseUrl(value: string): string {
 function validProtocol(value: unknown): AiProtocol {
   return value === "anthropic" || value === "openai" || value === "auto" ? value : "auto";
 }
+
+// 思考强度：auto 表示不下发任何参数，由模型或网关自行决定。
+// Anthropic 原生映射为 output_config.effort，OpenAI 兼容映射为 reasoning_effort。
+export type ThinkingLevel = "auto" | "low" | "medium" | "high" | "xhigh";
+export function validThinking(value: unknown): ThinkingLevel {
+  return value === "low" || value === "medium" || value === "high" || value === "xhigh" ? value : "auto";
+}
+
+function thinkingExtras(protocol: "anthropic" | "openai", thinking: ThinkingLevel | undefined): Record<string, unknown> {
+  if (!thinking || thinking === "auto") return {};
+  if (protocol === "anthropic") {
+    // 4.6+ 模型需要显式 adaptive 才会开启思考；旧模型/网关不支持时由 fetchUpstream 降级重试
+    return { thinking: { type: "adaptive" }, output_config: { effort: thinking } };
+  }
+  // OpenAI 兼容协议没有 xhigh，最高档降级为 high
+  return { reasoning_effort: thinking === "xhigh" ? "high" : thinking };
+}
+
+// 思考 token 会计入 max_tokens；预算过小（摘要、连通性探针等）时强制不下发思考参数，
+// 否则输出额度会被思考吃光，表现为空正文或 JSON 截断。
+function clampThinking(thinking: ThinkingLevel | undefined, maxTokens: number): ThinkingLevel {
+  return maxTokens < 2000 ? "auto" : validThinking(thinking);
+}
+
+function upstreamErrorMessage(raw: string, status: number): string {
+  try {
+    const j = JSON.parse(raw);
+    return j?.error?.message || j?.message || `HTTP ${status}`;
+  } catch {
+    const text = raw.trim();
+    return text ? text.slice(0, 300) : `HTTP ${status}`;
+  }
+}
+
+// 部分老模型与中转网关不认识 effort / reasoning_effort，会直接 400。
+// 只有错误明确指向“未知/不支持参数”时才去掉该参数重试一次，避免掩盖真正的配置错误。
+async function fetchUpstream(
+  url: string,
+  init: { headers: Record<string, string>; signal?: AbortSignal; body: Record<string, any> },
+  protocol: "anthropic" | "openai",
+  thinking: ThinkingLevel | undefined
+): Promise<globalThis.Response> {
+  const extras = thinkingExtras(protocol, thinking);
+  const doFetch = (body: Record<string, any>) =>
+    fetch(url, { method: "POST", headers: init.headers, signal: init.signal, body: JSON.stringify(body) });
+  if (!Object.keys(extras).length) return doFetch(init.body);
+
+  const first = await doFetch({ ...init.body, ...extras });
+  if (first.ok) return first;
+  let raw = "";
+  try { raw = await first.text(); } catch { /* ignore */ }
+  const paramRejected =
+    first.status === 400 &&
+    /effort|reasoning|thinking|output_config|unknown|unsupported|unrecognized|unexpected|not supported|extra field|additional property/i.test(raw);
+  if (!paramRejected) {
+    const e: any = new Error(upstreamErrorMessage(raw, first.status));
+    e.status = first.status;
+    throw e;
+  }
+  console.warn(`[ai] 上游不支持思考强度参数，已自动降级重试（HTTP ${first.status}）`);
+  return doFetch(init.body);
+}
 function resolveBaseUrl(user: any, req: Request): string {
   const raw = req.session.userApiBaseUrl || user.ai_api_base_url || BASE_URL || "https://api.anthropic.com";
   return normalizeBaseUrl(raw);
@@ -387,38 +449,63 @@ export type AiRuntimeConfig = {
   baseUrl: string;
   protocol: "anthropic" | "openai";
   model: string;
+  thinking: ThinkingLevel;
 };
 
 // protocol=auto 时按 baseUrl 是否以 /v1 结尾推断协议；模型缺省按协议给出默认值
-function buildRuntimeConfig(key: string, source: AiRuntimeConfig["source"], baseUrl: string | null | undefined, protocol: string | undefined, model: string | null | undefined): AiRuntimeConfig {
+function buildRuntimeConfig(key: string, source: AiRuntimeConfig["source"], baseUrl: string | null | undefined, protocol: string | undefined, model: string | null | undefined, thinking?: unknown): AiRuntimeConfig {
   const base = normalizeBaseUrl(baseUrl || "https://api.anthropic.com");
   const resolvedProtocol = validProtocol(protocol) === "auto"
     ? (base.endsWith("/v1") ? "openai" : "anthropic")
     : (validProtocol(protocol) as "anthropic" | "openai");
   const resolvedModel = String(model || "").trim() || (resolvedProtocol === "anthropic" ? "claude-opus-5" : MODEL);
-  return { key, source, baseUrl: base, protocol: resolvedProtocol, model: resolvedModel };
+  return { key, source, baseUrl: base, protocol: resolvedProtocol, model: resolvedModel, thinking: validThinking(thinking) };
+}
+
+// writer scope 的会话/账号字段，供 world/agent 在自身字段留空时逐项继承
+function writerScopeFields(req: Request, user: any) {
+  const s = req.session;
+  return {
+    baseUrl: s.userApiKeyBaseUrl || s.userApiBaseUrl || user.ai_api_base_url,
+    protocol: s.userApiKeyProtocol || s.userApiProtocol || user.ai_api_protocol,
+    model: s.userApiKeyModel || s.userApiModel || user.ai_api_model,
+    thinking: s.userApiKeyThinking || user.ai_api_thinking,
+  };
 }
 
 // 依据密钥来源挑选配置来源：站方 → 站方默认；借用 writer 的 → writer 配置；其余 → 各 scope 自己的配置
 function scopedRuntimeConfig(resolved: ResolvedKey, req: Request, user: any, scope: AiScope, opts?: { fallbackToWriter?: boolean }): AiRuntimeConfig | null {
   if (!resolved.key) return null;
+  const field = SCOPE_FIELD[scope];
+  const session = req.session as any;
+  const ownThinking = session[`${field.session}Thinking`] || user[`${field.column}_thinking`];
+  const writer = opts?.fallbackToWriter ? writerScopeFields(req, user) : null;
+
   if (resolved.source === "station") {
-    return buildRuntimeConfig(resolved.key, "station", BASE_URL || "https://api.anthropic.com", BASE_URL.endsWith("/v1") ? "openai" : "anthropic", MODEL);
+    // 站方密钥必须配站方端点，个人 Base URL/模型一律不生效；思考强度不涉及密钥外泄，可沿用用户选择
+    const thinking = ownThinking || (writer ? writer.thinking : undefined) || "auto";
+    return buildRuntimeConfig(resolved.key, "station", BASE_URL || "https://api.anthropic.com", BASE_URL.endsWith("/v1") ? "openai" : "anthropic", MODEL, thinking);
   }
   if (resolved.source === "writer-session" || resolved.source === "writer-db") {
     // 会话模式保存的端点字段名为 userApiKeyBaseUrl，需优先读取，避免回落站方默认端点
-    const s = req.session;
+    const w = writerScopeFields(req, user);
     return buildRuntimeConfig(
       resolved.key,
       resolved.source === "writer-session" ? "session" : "user-db",
-      s.userApiKeyBaseUrl || s.userApiBaseUrl || user.ai_api_base_url,
-      s.userApiKeyProtocol || s.userApiProtocol || user.ai_api_protocol,
-      s.userApiKeyModel || s.userApiModel || user.ai_api_model
+      w.baseUrl,
+      w.protocol,
+      w.model,
+      w.thinking
     );
   }
-  const field = SCOPE_FIELD[scope];
-  const session = req.session as any;
-  return buildRuntimeConfig(resolved.key, resolved.source as AiRuntimeConfig["source"], session[`${field.session}BaseUrl`] || user[`${field.column}_base_url`], session[`${field.session}Protocol`] || user[`${field.column}_protocol`], session[`${field.session}Model`] || user[`${field.column}_model`]);
+  return buildRuntimeConfig(
+    resolved.key,
+    resolved.source as AiRuntimeConfig["source"],
+    session[`${field.session}BaseUrl`] || user[`${field.column}_base_url`] || writer?.baseUrl,
+    session[`${field.session}Protocol`] || user[`${field.column}_protocol`] || writer?.protocol,
+    session[`${field.session}Model`] || user[`${field.column}_model`] || writer?.model,
+    ownThinking || writer?.thinking
+  );
 }
 
 export function resolveRuntimeConfig(req: Request, user: any): AiRuntimeConfig | null {
@@ -489,21 +576,22 @@ export async function streamChat(opts: {
   protocol: "anthropic" | "openai";
   baseUrl: string;
   model: string;
+  thinking?: ThinkingLevel;
   onDelta: (text: string) => void;
   signal?: AbortSignal;
 }) {
   const { key, system, userPrompt, maxTokens, onDelta, signal, protocol, baseUrl, model } = opts;
+  const thinking = clampThinking(opts.thinking, maxTokens);
 
   if (protocol === "openai") {
     const url = `${baseUrl}/chat/completions`;
-    const res = await fetch(url, {
-      method: "POST",
+    const res = await fetchUpstream(url, {
       signal,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${key}`,
       },
-      body: JSON.stringify({
+      body: {
         model,
         max_tokens: maxTokens,
         stream: true,
@@ -511,8 +599,8 @@ export async function streamChat(opts: {
           { role: "system", content: system },
           { role: "user", content: userPrompt },
         ],
-      }),
-    });
+      },
+    }, "openai", thinking);
     if (!res.ok) {
       let detail = `HTTP ${res.status}`;
       try {
@@ -536,6 +624,7 @@ export async function streamChat(opts: {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
+    let emitted = false;
     const parseOpenAiLine = (line: string): boolean => {
       const t = line.trim();
       if (!t.startsWith("data:")) return false;
@@ -543,10 +632,15 @@ export async function streamChat(opts: {
       if (payload === "[DONE]") return true;
       try {
         const j = JSON.parse(payload);
+        if (j?.error) throw Object.assign(new Error(j.error.message || "上游流式错误"), { status: j.error.code || 502 });
         const choice = j?.choices?.[0];
+        if (choice?.finish_reason === "length" && !emitted) {
+          throw new Error("上游输出额度已被思考消耗（finish_reason=length），请降低思考强度或提高 maxTokens");
+        }
         const text = extractTextContent(choice?.delta?.content) || extractTextContent(choice?.message?.content);
-        if (text) onDelta(text);
-      } catch {
+        if (text) { emitted = true; onDelta(text); }
+      } catch (err: any) {
+        if (err?.status || /额度|思考/.test(err?.message || "")) throw err;
         /* skip malformed upstream frame */
       }
       return false;
@@ -566,22 +660,21 @@ export async function streamChat(opts: {
 
   // Anthropic 原生协议
   const url = `${baseUrl}${baseUrl.endsWith("/v1") ? "" : "/v1"}/messages`;
-  const res = await fetch(url, {
-    method: "POST",
+  const res = await fetchUpstream(url, {
     signal,
     headers: {
       "Content-Type": "application/json",
       "x-api-key": key,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({
+    body: {
       model,
       max_tokens: maxTokens,
       stream: true,
       system,
       messages: [{ role: "user", content: userPrompt }],
-    }),
-  });
+    },
+  }, "anthropic", thinking);
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
     try {
@@ -605,13 +698,25 @@ export async function streamChat(opts: {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
+  let emitted = false;
+  let stopReason = "";
   const parseAnthropicLine = (line: string) => {
     const t = line.trim();
     if (!t.startsWith("data:")) return;
     try {
       const j = JSON.parse(t.slice(5).trim());
-      if (j.type === "content_block_delta" && j.delta?.type === "text_delta" && j.delta.text) onDelta(j.delta.text);
-    } catch {
+      if (j.type === "error") {
+        throw Object.assign(new Error(j.error?.message || "上游流式错误"), { status: 502 });
+      }
+      if (j.type === "message_delta" && j.delta?.stop_reason) stopReason = j.delta.stop_reason;
+      // 思考增量（thinking_delta / signature_delta）不属于正文，直接忽略；
+      // 只有 text_delta 才交给调用方拼接，避免把推理过程写进章节。
+      if (j.type === "content_block_delta" && j.delta?.type === "text_delta" && j.delta.text) {
+        emitted = true;
+        onDelta(j.delta.text);
+      }
+    } catch (err: any) {
+      if (err?.status) throw err;
       /* skip malformed upstream frame */
     }
   };
@@ -625,6 +730,9 @@ export async function streamChat(opts: {
   }
   buf += decoder.decode();
   if (buf.trim()) parseAnthropicLine(buf);
+  if (!emitted && (stopReason === "max_tokens" || stopReason === "model_context_window_exceeded")) {
+    throw new Error("上游输出额度已被思考消耗（stop_reason=" + stopReason + "），请降低思考强度或提高 maxTokens");
+  }
 }
 
 // 带工具的对话：一次性发出完整请求，返回 {text, toolCalls, stop_reason}（不流式中间 token）。
@@ -638,9 +746,11 @@ export async function chatWithTools(opts: {
   protocol: "anthropic" | "openai";
   baseUrl: string;
   model: string;
+  thinking?: ThinkingLevel;
   signal?: AbortSignal;
-}): Promise<{ text: string; toolCalls: Array<{ id?: string; name: string; args: any }>; stopReason: string }> {
+}): Promise<{ text: string; toolCalls: Array<{ id?: string; name: string; args: any }>; stopReason: string; contentBlocks?: any[] }> {
   const { key, system, messages, tools, maxTokens, protocol, baseUrl, model, signal } = opts;
+  const thinking = clampThinking(opts.thinking, maxTokens);
   const toolCalls: Array<{ id?: string; name: string; args: any }> = [];
   let text = "";
 
@@ -702,14 +812,15 @@ export async function chatWithTools(opts: {
         oaMessages.push({ role: m.role, content: String(m.content) });
       }
     }
-    const res = await fetch(url, {
-      method: "POST",
+    const res = await fetchUpstream(url, {
       signal,
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model, max_tokens: maxTokens, messages: oaMessages, tools: oaTools, tool_choice: "auto" }),
-    });
+      body: { model, max_tokens: maxTokens, messages: oaMessages, tools: oaTools, tool_choice: "auto" },
+    }, "openai", thinking);
     if (!res.ok) {
-      const e: any = new Error(`HTTP ${res.status}`); e.status = res.status; throw e;
+      let raw = "";
+      try { raw = await res.text(); } catch { /* ignore */ }
+      const e: any = new Error(upstreamErrorMessage(raw, res.status)); e.status = res.status; throw e;
     }
     const body: any = await res.json();
     const choice = body?.choices?.[0];
@@ -738,12 +849,11 @@ export async function chatWithTools(opts: {
         ? m.content
         : [{ type: "text", text: String(m.content) }],
   }));
-  const res = await fetch(url, {
-    method: "POST",
+  const res = await fetchUpstream(url, {
     signal,
     headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model, max_tokens: maxTokens, system, tools: antTools, messages: antMessages }),
-  });
+    body: { model, max_tokens: maxTokens, system, tools: antTools, messages: antMessages },
+  }, "anthropic", thinking);
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
     try { const j = await res.json(); detail = j?.error?.message || j?.message || detail; } catch { /* ignore */ }
@@ -754,8 +864,9 @@ export async function chatWithTools(opts: {
   for (const b of blocks) {
     if (b.type === "text" && typeof b.text === "string") text += b.text;
     else if (b.type === "tool_use") toolCalls.push({ id: b.id, name: b.name, args: b.input || {} });
+    // thinking / redacted_thinking 不计入正文，但必须原样回传给下一轮（见 agent 消息回填）
   }
-  return { text, toolCalls, stopReason: body?.stop_reason || "unknown" };
+  return { text, toolCalls, stopReason: body?.stop_reason || "unknown", contentBlocks: blocks };
 }
 
 export function formatAiError(
@@ -894,6 +1005,7 @@ router.post("/run", async (req, res) => {
       protocol: runtime.protocol,
       baseUrl: runtime.baseUrl,
       model: runtime.model,
+      thinking: runtime.thinking,
       signal: ac.signal,
       onDelta: (text) => {
         generated += text;
@@ -984,13 +1096,16 @@ router.get("/settings", (req, res) => {
   else if (user.ai_api_key_enabled) agentSource = "writer-db";
   else if (station) agentSource = "station";
 
+  const agentDedicated = !!(req.session.agentApiKey || user.agent_api_key_enabled || req.session.agentApiKeyBaseUrl || req.session.agentApiBaseUrl || user.agent_api_base_url || req.session.agentApiKeyModel || req.session.agentApiModel || user.agent_api_model || req.session.agentApiKeyThinking || validThinking(user.agent_api_thinking) !== "auto");
   const agentConfig = {
     keyConfigured: agentSource !== "none",
     keySource: agentSource,
     baseUrl: req.session.agentApiKeyBaseUrl || req.session.agentApiBaseUrl || user.agent_api_base_url || null,
     protocol: validProtocol(req.session.agentApiKeyProtocol || req.session.agentApiProtocol || user.agent_api_protocol),
     model: req.session.agentApiKeyModel || req.session.agentApiModel || user.agent_api_model || null,
-    isSeparate: !!(req.session.agentApiKey || user.agent_api_key_enabled || req.session.agentApiKeyBaseUrl || req.session.agentApiBaseUrl || user.agent_api_base_url || req.session.agentApiKeyModel || req.session.agentApiModel || user.agent_api_model),
+    thinking: validThinking(req.session.agentApiKeyThinking || user.agent_api_thinking),
+    isSeparate: agentDedicated,
+    isDedicated: agentDedicated,
   };
 
   // 设定库（角色与地图）配置
@@ -1007,6 +1122,7 @@ router.get("/settings", (req, res) => {
     baseUrl: req.session.userApiKeyBaseUrl || req.session.userApiBaseUrl || user.ai_api_base_url || null,
     protocol: validProtocol(req.session.userApiKeyProtocol || req.session.userApiProtocol || user.ai_api_protocol),
     model: req.session.userApiKeyModel || req.session.userApiModel || user.ai_api_model || null,
+    thinking: validThinking(req.session.userApiKeyThinking || user.ai_api_thinking),
   };
 
   const distillConfig = {
@@ -1015,6 +1131,7 @@ router.get("/settings", (req, res) => {
     baseUrl: req.session.distillApiKeyBaseUrl || req.session.distillApiBaseUrl || user.distill_api_base_url || null,
     protocol: validProtocol(req.session.distillApiKeyProtocol || req.session.distillApiProtocol || user.distill_api_protocol),
     model: req.session.distillApiKeyModel || req.session.distillApiModel || user.distill_api_model || null,
+    thinking: validThinking(req.session.distillApiKeyThinking || user.distill_api_thinking),
   };
 
   const worldConfig = {
@@ -1024,6 +1141,7 @@ router.get("/settings", (req, res) => {
     baseUrl: req.session.worldApiKeyBaseUrl || req.session.worldApiBaseUrl || user.world_api_base_url || null,
     protocol: validProtocol(req.session.worldApiKeyProtocol || req.session.worldApiProtocol || user.world_api_protocol),
     model: req.session.worldApiKeyModel || req.session.worldApiModel || user.world_api_model || null,
+    thinking: validThinking(req.session.worldApiKeyThinking || user.world_api_thinking),
   };
 
   res.json({
@@ -1052,21 +1170,23 @@ router.post("/test-tools", async (req, res) => {
   let baseUrl: string = "";
   let protocol: "anthropic" | "openai" = "openai";
   let model: string = "";
+  let thinking: ThinkingLevel = "auto";
 
   if (target === "agent") {
     const rt = resolveAgentRuntimeConfig(req, user);
     if (!rt) return res.status(400).json({ error: "未配置 Agent 运行时密钥或端点" });
-    key = rt.key; baseUrl = rt.baseUrl; protocol = rt.protocol; model = rt.model;
+    key = rt.key; baseUrl = rt.baseUrl; protocol = rt.protocol; model = rt.model; thinking = rt.thinking;
   } else if (target === "custom") {
-    const { apiKey, customBaseUrl, customProtocol, customModel } = req.body;
+    const { apiKey, customBaseUrl, customProtocol, customModel, customThinking } = req.body;
     key = apiKey || "";
     baseUrl = normalizeBaseUrl(customBaseUrl || "");
     protocol = customProtocol === "anthropic" ? "anthropic" : "openai";
     model = customModel || "";
+    thinking = validThinking(customThinking);
   } else {
     const rt = resolveRuntimeConfig(req, user);
     if (!rt) return res.status(400).json({ error: "未配置写作助手运行时密钥或端点" });
-    key = rt.key; baseUrl = rt.baseUrl; protocol = rt.protocol; model = rt.model;
+    key = rt.key; baseUrl = rt.baseUrl; protocol = rt.protocol; model = rt.model; thinking = rt.thinking;
   }
 
   if (!key) return res.status(400).json({ error: "缺少 API Key" });
@@ -1096,6 +1216,7 @@ router.post("/test-tools", async (req, res) => {
       messages: [{ role: "user", content: "请执行探针工具 probe_connection。" }],
       tools: [testTool],
       maxTokens: 500,
+      thinking,
       signal: ac.signal
     });
     clearTimeout(timeout);
@@ -1126,7 +1247,7 @@ function makeKeySettingsHandler(scope: AiScope, label: string, opts?: { fallback
     const user = currentUser(req) as any;
     if (!user) return res.status(401).json({ error: "请先登录" });
     const session = req.session as any;
-    const { apiKey, mode, baseUrl, protocol, model } = req.body || {};
+    const { apiKey, mode, baseUrl, protocol, model, thinking } = req.body || {};
     const station = getStationKey(user);
     const writerConfigured = Boolean(req.session.userApiKey || (user.ai_api_key_enabled && user.ai_api_key_enc));
     const ownSession = session[field.session];
@@ -1137,36 +1258,42 @@ function makeKeySettingsHandler(scope: AiScope, label: string, opts?: { fallback
       if (baseUrl !== undefined) session[`${field.session}BaseUrl`] = baseUrl ? normalizeBaseUrl(String(baseUrl)) : undefined;
       if (protocol !== undefined) session[`${field.session}Protocol`] = validProtocol(protocol);
       if (model !== undefined) session[`${field.session}Model`] = model ? String(model).trim() : undefined;
+      if (thinking !== undefined) session[`${field.session}Thinking`] = validThinking(thinking);
       const usable = Boolean(session[field.session] || ownEnabled || station || (opts?.fallbackToWriter && writerConfigured));
       if (!usable) return res.status(400).json({ error: `请填写${label ? label + "专用 " : ""}API Key` });
       return res.json({ ok: true, source: session[field.session] ? "session" : (station ? "station" : "none") });
     }
     if (mode === "persist") {
       const hasNewKey = apiKey && String(apiKey).trim();
-      const usable = Boolean(hasNewKey || ownEnabled || station || (opts?.fallbackToWriter && writerConfigured));
+      // 会话里已有 Key 时不应因“本次没重新输入”而拒绝保存模型/端点
+      const usable = Boolean(hasNewKey || ownSession || ownEnabled || station || (opts?.fallbackToWriter && writerConfigured));
       if (!usable) return res.status(400).json({ error: `请填写${label ? label + "专用 " : ""}API Key` });
       const enc = (hasNewKey ? encryptKeyDb(String(apiKey).trim()) : user[`${field.column}_key_enc`]) ?? null;
       const normalizedBase = (baseUrl === undefined ? user[`${field.column}_base_url`] : (baseUrl ? normalizeBaseUrl(String(baseUrl)) : null)) ?? null;
       const normalizedProtocol = protocol === undefined ? validProtocol(user[`${field.column}_protocol`]) : validProtocol(protocol);
       const normalizedModel = (model === undefined ? user[`${field.column}_model`] : (model ? String(model).trim() : null)) ?? null;
+      const normalizedThinking = thinking === undefined ? validThinking(user[`${field.column}_thinking`]) : validThinking(thinking);
       db.prepare(
-        `UPDATE users SET ${field.column}_key_enc = ?, ${field.column}_key_enabled = ?, ${field.column}_base_url = ?, ${field.column}_protocol = ?, ${field.column}_model = ? WHERE id = ?`
+        `UPDATE users SET ${field.column}_key_enc = ?, ${field.column}_key_enabled = ?, ${field.column}_base_url = ?, ${field.column}_protocol = ?, ${field.column}_model = ?, ${field.column}_thinking = ? WHERE id = ?`
       ).run(
         enc,
         hasNewKey ? 1 : (user[`${field.column}_key_enabled`] ? 1 : 0),
         normalizedBase,
         normalizedProtocol,
         normalizedModel,
+        normalizedThinking,
         user.id
       );
-      return res.json({ ok: true, source: hasNewKey ? "user-db" : (user[`${field.column}_key_enabled`] ? "user-db" : (station ? "station" : "none")) });
+      const persistedSource = hasNewKey ? "user-db" : (user[`${field.column}_key_enabled`] ? "user-db" : (station ? "station" : (ownSession ? "session" : "none")));
+      return res.json({ ok: true, source: persistedSource });
     }
     if (mode === "clear") {
       session[field.session] = undefined;
       session[`${field.session}BaseUrl`] = undefined;
       session[`${field.session}Protocol`] = undefined;
       session[`${field.session}Model`] = undefined;
-      db.prepare(`UPDATE users SET ${field.column}_key_enabled = 0, ${field.column}_key_enc = NULL, ${field.column}_base_url = NULL, ${field.column}_protocol = 'auto', ${field.column}_model = NULL WHERE id = ?`).run(user.id);
+      session[`${field.session}Thinking`] = undefined;
+      db.prepare(`UPDATE users SET ${field.column}_key_enabled = 0, ${field.column}_key_enc = NULL, ${field.column}_base_url = NULL, ${field.column}_protocol = 'auto', ${field.column}_model = NULL, ${field.column}_thinking = 'auto' WHERE id = ?`).run(user.id);
       return res.json({ ok: true, source: "none" });
     }
     res.status(400).json({ error: "未知的 mode" });
@@ -1242,45 +1369,50 @@ router.post("/prompts/reset", (req, res) => {
 });
 
 // 像 cc-switch 一样：根据 API Key + Base URL 主动探测上游可用模型
-// POST /api/ai/fetch-models  body: { apiKey?, baseUrl, protocol, scope? }
-// scope: writer | distill | world — 用于在 apiKey 留空时回退到对应模块的已保存 Key
+// POST /api/ai/fetch-models  body: { apiKey?, baseUrl?, protocol?, scope? }
+// scope: writer | distill | world | agent — 用于在 apiKey / baseUrl 留空时回退到对应模块已保存的配置
 // 返回 { models: string[], source: 'anthropic'|'openai', error?: string }
 router.post("/fetch-models", async (req, res) => {
   const user = currentUser(req)!;
   const { apiKey: explicitKey, baseUrl, protocol, scope } = req.body || {};
 
+  const runtime = scope === "distill"
+    ? resolveDistillRuntimeConfig(req, user)
+    : scope === "world"
+      ? resolveWorldRuntimeConfig(req, user)
+      : scope === "agent"
+        ? resolveAgentRuntimeConfig(req, user)
+        : resolveRuntimeConfig(req, user);
+
   // 没有显式给 Key 时，按 scope 回退到当前用户已保存的 Key（session / user-db / station）
   let resolvedKey = "";
   if (explicitKey && typeof explicitKey === "string" && explicitKey.trim()) {
     resolvedKey = explicitKey.trim();
-  } else {
-    const runtime = (scope === "distill")
-      ? resolveDistillRuntimeConfig(req, user)
-      : (scope === "world")
-        ? resolveWorldRuntimeConfig(req, user)
-        : resolveRuntimeConfig(req, user);
-    if (runtime?.key) resolvedKey = runtime.key;
+  } else if (runtime?.key) {
+    resolvedKey = runtime.key;
   }
   if (!resolvedKey) {
     return res.json({ models: [], error: "请先填写 API Key（或先在上方保存一次配置）" });
   }
-  if (!baseUrl || typeof baseUrl !== "string" || !baseUrl.trim()) {
+  const effectiveBase = (typeof baseUrl === "string" && baseUrl.trim()) ? baseUrl.trim() : (runtime?.baseUrl || "");
+  if (!effectiveBase) {
     return res.json({ models: [], error: "请提供 API Base URL" });
   }
   let normalizedBase: string;
   try {
-    normalizedBase = normalizeBaseUrl(baseUrl.trim());
+    normalizedBase = normalizeBaseUrl(effectiveBase);
   } catch (err: any) {
     return res.json({ models: [], error: err?.message || "Base URL 格式不合法" });
   }
   const effectiveProtocol: Exclude<AiProtocol, "auto"> = validProtocol(protocol) === "auto"
-    ? (normalizedBase.endsWith("/v1") ? "openai" : "anthropic")
+    ? (normalizedBase.endsWith("/v1") ? "openai" : (runtime?.protocol || "anthropic"))
     : (validProtocol(protocol) as Exclude<AiProtocol, "auto">);
 
   try {
     if (effectiveProtocol === "anthropic") {
       // Anthropic 原生：GET /v1/models（部分中转网关可能未实现此端点）
-      const url = `${normalizedBase}/v1/models?limit=100`;
+      // baseUrl 已带 /v1 时不要再拼一层，避免 /v1/v1/models
+      const url = normalizedBase.endsWith("/v1") ? `${normalizedBase}/models?limit=100` : `${normalizedBase}/v1/models?limit=100`;
       const r = await fetch(url, {
         headers: {
           "x-api-key": resolvedKey,
@@ -1374,6 +1506,7 @@ router.post("/million/summarize-chapter", async (req, res) => {
       messages: [{ role: "user", content: `【章节标题】《${chapter.title}》\n\n【正文全文】\n${chapter.content.slice(0, 8000)}` }],
       tools: [],
       maxTokens: 800,
+      thinking: rt.thinking,
     });
 
     let parsed: any = {};

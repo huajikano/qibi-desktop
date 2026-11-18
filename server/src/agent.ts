@@ -15,7 +15,7 @@ import { indexOne, query as kbQuery, indexNovel as kbIndexNovel, kbStats as kbGe
 import { streamChat } from "./routes/ai.js";
 
 // Agent runtime config：逐请求透传（进程内全局单例会让并发用户的密钥/端点互相覆盖）
-export type AgentRuntimeConfig = { key: string; protocol: string; baseUrl: string; model: string };
+export type AgentRuntimeConfig = { key: string; protocol: string; baseUrl: string; model: string; thinking?: string };
 
 export type AgentToolSpec = {
   name: string;
@@ -702,6 +702,7 @@ export async function dispatchAgentTool(
         protocol: rc.protocol as any,
         baseUrl: rc.baseUrl,
         model: rc.model,
+        thinking: rc.thinking as any,
         onDelta: (text: string) => { generated += text; },
       });
       if (!generated.trim()) throw new Error("AI 写作引擎未返回有效内容，请检查 API 配置");

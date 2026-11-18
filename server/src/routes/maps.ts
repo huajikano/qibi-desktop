@@ -157,6 +157,7 @@ router.post("/novels/:novelId/maps/:mapId/ai-enrich", ownsNovel, async (req, res
       protocol: runtime.protocol,
       baseUrl: runtime.baseUrl,
       model: runtime.model,
+      thinking: runtime.thinking,
       onDelta: (text) => {
         fullOutput += text;
       },

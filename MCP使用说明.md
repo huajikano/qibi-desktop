@@ -58,11 +58,11 @@
 
 ### 方案一：在 Claude Code 中直接使用（已自动配置）
 
-本项目根目录已自动生成 `.mcp.json`，在终端运行 Claude Code 时即可自动识别：
+仓库中不包含 `.mcp.json`，请手动创建（路径中的 <项目根目录> 替换为本机源码目录）：
 
 ```bash
 # 若需手动添加至全局 Claude Code 配置：
-claude mcp add novelforge node "C:\Users\Administrator\Desktop\xm\XXS\mcp\server.mjs"
+claude mcp add novelforge node "<项目根目录>\mcp\server.mjs"
 ```
 
 ---
@@ -79,10 +79,10 @@ AstrBot 支持 **Stdio 本地模式** 与 **SSE 网络模式** 两种方式：
     "type": "stdio",
     "command": "node",
     "args": [
-      "C:\\Users\\Administrator\\Desktop\\xm\\XXS\\mcp\\server.mjs"
+      "<项目根目录>\\mcp\\server.mjs"
     ],
     "env": {
-      "DATA_DIR": "C:\\Users\\Administrator\\Desktop\\xm\\XXS\\data"
+      "DATA_DIR": "<项目根目录>\\server\\data"
     }
   }
 }
@@ -106,10 +106,10 @@ AstrBot 支持 **Stdio 本地模式** 与 **SSE 网络模式** 两种方式：
     "起笔-小说创作平台": {
       "command": "node",
       "args": [
-        "C:\\Users\\Administrator\\Desktop\\xm\\XXS\\mcp\\server.mjs"
+        "<项目根目录>\\mcp\\server.mjs"
       ],
       "env": {
-        "DATA_DIR": "C:\\Users\\Administrator\\Desktop\\xm\\XXS\\data"
+        "DATA_DIR": "<项目根目录>\\server\\data"
       }
     }
   }
@@ -128,7 +128,7 @@ AstrBot 支持 **Stdio 本地模式** 与 **SSE 网络模式** 两种方式：
     "novelforge": {
       "command": "node",
       "args": [
-        "C:\\Users\\Administrator\\Desktop\\xm\\XXS\\mcp\\server.mjs"
+        "<项目根目录>\\mcp\\server.mjs"
       ]
     }
   }

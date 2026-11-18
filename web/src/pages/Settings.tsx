@@ -1,10 +1,55 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bot, Terminal, KeyRound, PenTool, RotateCcw, Save, AlertCircle, CheckCircle2, Trash2, ExternalLink, Plug, Sparkles, MapPin, Globe, ShieldCheck, Copy, Check, BookOpen, ChevronDown, ChevronUp, FileText, Smartphone, History, Users, Compass, HelpCircle, ScrollText, Upload, Power, Plus, Edit3, RefreshCw, Loader2, ListFilter } from "lucide-react";
-import { api } from "../api";
+import { api, skillAuthorApi } from "../api";
 import { useAuth } from "../stores/auth";
-import type { AiProtocol, AiSettings } from "../types";
+import type { AiProtocol, AiSettings, ThinkingLevel } from "../types";
 
 type Msg = { kind: "ok" | "err"; text: string } | null;
+
+// 依据服务端返回的实际密钥来源生成保存提示，避免“提示已保存、实际用的是站方密钥”
+function savedText(res: { source?: string }, mode: "session" | "persist", label: string): string {
+  if (res.source === "station") return `${label}已保存，但当前仍使用站方密钥，个人配置未生效`;
+  if (res.source === "user-db") return `${label}已加密保存到账号`;
+  if (res.source === "session") return `${label}已保存到当前会话`;
+  if (mode === "session") return `${label}已保存到当前会话`;
+  return `${label}已保存`;
+}
+
+// 思考强度选项：auto 不下发参数，其余按协议映射到 effort / reasoning_effort
+const THINKING_OPTIONS: Array<{ value: ThinkingLevel; label: string; hint: string }> = [
+  { value: "auto", label: "自动（跟随模型默认）", hint: "不发送思考强度参数，由模型或网关自行决定" },
+  { value: "low", label: "低 · 快速", hint: "思考更少，响应更快、更省 token" },
+  { value: "medium", label: "中 · 均衡", hint: "速度与质量平衡，多数场景推荐" },
+  { value: "high", label: "高 · 深入", hint: "推理更充分，适合复杂情节推演与长篇规划" },
+  { value: "xhigh", label: "极高 · 最深", hint: "思考最充分，耗时与消耗最高；OpenAI 兼容协议按 high 发送" },
+];
+
+function ThinkingSelect({ id, value, onChange, disabled }: {
+  id: string;
+  value: ThinkingLevel;
+  onChange: (value: ThinkingLevel) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-sm text-ink-2" htmlFor={id}>思考强度</label>
+      <select
+        id={id}
+        className="input"
+        value={value}
+        onChange={(e) => onChange(e.target.value as ThinkingLevel)}
+        disabled={disabled}
+      >
+        {THINKING_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value} title={o.hint}>{o.label}</option>
+        ))}
+      </select>
+      <p className="mt-1 text-[11px] leading-4 text-ink-3">
+        Anthropic 原生协议通过 <code>output_config.effort</code> 下发，OpenAI 兼容协议通过 <code>reasoning_effort</code> 下发；模型或网关不支持时会自动降级为不指定。
+      </p>
+    </div>
+  );
+}
 
 // MCP stdio 入口位于源码目录下，不能写死某台机器的绝对路径
 const MCP_CLI_COMMAND = 'claude mcp add novelforge node "<项目根目录>\\mcp\\server.mjs"';
@@ -43,6 +88,7 @@ export default function Settings() {
   const [writerBaseUrl, setWriterBaseUrl] = useState("");
   const [writerProtocol, setWriterProtocol] = useState<AiProtocol>("auto");
   const [writerModel, setWriterModel] = useState("");
+  const [writerThinking, setWriterThinking] = useState<ThinkingLevel>("auto");
   const [writerMode, setWriterMode] = useState<"session" | "persist">("persist");
   const [writerBusy, setWriterBusy] = useState(false);
   const [writerMsg, setWriterMsg] = useState<Msg>(null);
@@ -52,6 +98,7 @@ export default function Settings() {
   const [distillBaseUrl, setDistillBaseUrl] = useState("");
   const [distillProtocol, setDistillProtocol] = useState<AiProtocol>("auto");
   const [distillModel, setDistillModel] = useState("");
+  const [distillThinking, setDistillThinking] = useState<ThinkingLevel>("auto");
   const [distillMode, setDistillMode] = useState<"session" | "persist">("persist");
   const [distillBusy, setDistillBusy] = useState(false);
   const [distillMsg, setDistillMsg] = useState<Msg>(null);
@@ -61,6 +108,7 @@ export default function Settings() {
   const [worldBaseUrl, setWorldBaseUrl] = useState("");
   const [worldProtocol, setWorldProtocol] = useState<AiProtocol>("auto");
   const [worldModel, setWorldModel] = useState("");
+  const [worldThinking, setWorldThinking] = useState<ThinkingLevel>("auto");
   const [worldMode, setWorldMode] = useState<"session" | "persist">("persist");
   const [worldBusy, setWorldBusy] = useState(false);
   const [worldMsg, setWorldMsg] = useState<Msg>(null);
@@ -72,6 +120,7 @@ export default function Settings() {
   const [agentBaseUrl, setAgentBaseUrl] = useState("");
   const [agentProtocol, setAgentProtocol] = useState<AiProtocol>("auto");
   const [agentModel, setAgentModel] = useState("");
+  const [agentThinking, setAgentThinking] = useState<ThinkingLevel>("auto");
   const [agentMode, setAgentMode] = useState<"session" | "persist">("persist");
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentMsg, setAgentMsg] = useState<Msg>(null);
@@ -83,6 +132,8 @@ export default function Settings() {
   const [defaultPrompts, setDefaultPrompts] = useState<Record<string, string>>({});
   const [customPrompts, setCustomPrompts] = useState<Record<string, string>>({});
   const [activePromptText, setActivePromptText] = useState<string>("");
+  const promptEditedRef = useRef(false);
+  const promptTextRef = useRef("");
   const [promptBusy, setPromptBusy] = useState(false);
   const [promptMsg, setPromptMsg] = useState<Msg>(null);
 
@@ -161,9 +212,16 @@ export default function Settings() {
   const [skillEditing, setSkillEditing] = useState<SkillRec | null>(null);
   const [skillCreating, setSkillCreating] = useState(false);
   const [skillFileName, setSkillFileName] = useState("skill.md");
-  const [skillScopeFilter, setSkillScopeFilter] = useState<"all" | SkillRec["scope"]>("all");
+  const [skillScopeFilter, setSkillScopeFilter] = useState<"__all__" | SkillRec["scope"]>("__all__");
   const [skillBusy, setSkillBusy] = useState(false);
   const [skillMsg, setSkillMsg] = useState<Msg>(null);
+  // 从蒸馏作者导入 Skill：用页内弹窗代替 window.prompt（Electron 不支持 prompt）
+  const [skillImportOpen, setSkillImportOpen] = useState(false);
+  const [skillImportAuthors, setSkillImportAuthors] = useState<Array<{ id: number; name: string; slug: string; hasVersion: boolean }>>([]);
+  const [skillImportAuthorId, setSkillImportAuthorId] = useState("");
+  const [skillImportScope, setSkillImportScope] = useState<SkillRec["scope"]>("writer");
+  const [skillImportBusy, setSkillImportBusy] = useState(false);
+  const [skillImportError, setSkillImportError] = useState("");
 
   const loadSkills = async () => {
     try {
@@ -187,37 +245,71 @@ export default function Settings() {
 
   useEffect(() => { void loadMcpClients(); }, []);
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedUrl(text);
-    setTimeout(() => setCopiedUrl(null), 2000);
+  const copyToClipboard = async (text: string) => {
+    let ok = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      // 局域网 http 访问不是安全上下文，navigator.clipboard 不可用，退回 execCommand
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok) {
+      setCopiedUrl(text);
+      setTimeout(() => setCopiedUrl(null), 2000);
+    } else {
+      alert("复制失败，请手动选中文本复制");
+    }
   };
 
 
-  const loadSettings = () => {
+  // only 指定时只回填该模块，避免保存一个模块时把其他模块尚未保存的编辑冲掉
+  const loadSettings = (only?: "writer" | "distill" | "world" | "agent") => {
     return api.get<AiSettings>("/ai/settings").then((s) => {
       setSettings(s);
-      const w = s.writer || s;
-      setWriterBaseUrl(w.baseUrl || "");
-      setWriterProtocol(w.protocol);
-      setWriterModel(w.model || "");
+      if (!only || only === "writer") {
+        const w = s.writer || s;
+        setWriterBaseUrl(w.baseUrl || "");
+        setWriterProtocol(w.protocol);
+        setWriterModel(w.model || "");
+        setWriterThinking(w.thinking || "auto");
+      }
 
-      if (s.distill) {
+      if ((!only || only === "distill") && s.distill) {
         setDistillBaseUrl(s.distill.baseUrl || "");
         setDistillProtocol(s.distill.protocol);
         setDistillModel(s.distill.model || "");
+        setDistillThinking(s.distill.thinking || "auto");
       }
 
 
-      if (s.agent) {
+      if ((!only || only === "agent") && s.agent) {
         setAgentBaseUrl(s.agent.baseUrl || "");
         setAgentProtocol(s.agent.protocol);
         setAgentModel(s.agent.model || "");
+        setAgentThinking(s.agent.thinking || "auto");
       }
-      if (s.world) {
+      if ((!only || only === "world") && s.world) {
         setWorldBaseUrl(s.world.baseUrl || "");
         setWorldProtocol(s.world.protocol);
         setWorldModel(s.world.model || "");
+        setWorldThinking(s.world.thinking || "auto");
       }
     }).catch(() => undefined);
   };
@@ -232,24 +324,54 @@ export default function Settings() {
 
   
   useEffect(() => {
+    // 切换角色时总是重新载入该角色的文本
+    promptEditedRef.current = false;
+    const next = customPrompts[selectedPromptRole] !== undefined
+      ? customPrompts[selectedPromptRole]
+      : (defaultPrompts[selectedPromptRole] || "");
+    promptTextRef.current = next;
+    setActivePromptText(next);
+  }, [selectedPromptRole]);
+
+  useEffect(() => {
+    // 用户已开始编辑（或慢网络下初始加载晚到）时不覆盖输入
+    if (promptEditedRef.current) return;
     if (customPrompts[selectedPromptRole] !== undefined) {
+      promptTextRef.current = customPrompts[selectedPromptRole];
       setActivePromptText(customPrompts[selectedPromptRole]);
-    } else if (defaultPrompts[selectedPromptRole]) {
+    } else if (defaultPrompts[selectedPromptRole] !== undefined) {
+      promptTextRef.current = defaultPrompts[selectedPromptRole];
       setActivePromptText(defaultPrompts[selectedPromptRole]);
     }
-  }, [selectedPromptRole, customPrompts, defaultPrompts]);
+  }, [customPrompts, defaultPrompts, selectedPromptRole]);
 
   const saveCurrentPrompt = async () => {
+    const text = activePromptText.trim();
+    if (!text) {
+      if (!confirm("当前提示词为空。保存将删除该能力的自定义提示词并恢复官方默认，确定继续吗？")) return;
+    }
     setPromptBusy(true);
     setPromptMsg(null);
     try {
-      const updated = { ...customPrompts, [selectedPromptRole]: activePromptText.trim() };
+      const updated = { ...customPrompts, [selectedPromptRole]: text };
       const res = await api.post<{ ok: boolean; custom: Record<string, string>; defaults: Record<string, string> }>("/ai/prompts", {
         prompts: updated,
       });
       setCustomPrompts(res.custom || {});
       const roleObj = PROMPT_ROLES.find((r) => r.id === selectedPromptRole);
-      setPromptMsg({ kind: "ok", text: `已成功保存「${roleObj?.name || selectedPromptRole}」的自定义提示词！` });
+      setPromptMsg({
+        kind: "ok",
+        text: text
+          ? `已成功保存「${roleObj?.name || selectedPromptRole}」的自定义提示词`
+          : `已清除「${roleObj?.name || selectedPromptRole}」的自定义提示词，恢复为官方默认`,
+      });
+      // 保存期间用户继续修改时，不覆盖新输入
+      if (promptTextRef.current === text) {
+        const next = res.custom?.[selectedPromptRole] ?? res.defaults?.[selectedPromptRole] ?? "";
+        promptTextRef.current = next;
+        promptEditedRef.current = false;
+        setActivePromptText(next);
+      }
     } catch (err: any) {
       setPromptMsg({ kind: "err", text: err.message || "保存提示词失败" });
     } finally {
@@ -267,7 +389,10 @@ export default function Settings() {
         role: selectedPromptRole,
       });
       setCustomPrompts(res.custom || {});
-      setActivePromptText(res.defaults?.[selectedPromptRole] || defaultPrompts[selectedPromptRole] || "");
+      const next = res.defaults?.[selectedPromptRole] || defaultPrompts[selectedPromptRole] || "";
+      promptEditedRef.current = false;
+      promptTextRef.current = next;
+      setActivePromptText(next);
       setPromptMsg({ kind: "ok", text: `已将「${roleObj?.name || selectedPromptRole}」恢复为官方默认提示词` });
     } catch (err: any) {
       setPromptMsg({ kind: "err", text: err.message || "重置失败" });
@@ -283,8 +408,11 @@ export default function Settings() {
     try {
       const res = await api.post<{ ok: boolean; custom: Record<string, string>; defaults: Record<string, string> }>("/ai/prompts/reset", {});
       setCustomPrompts(res.custom || {});
-      setActivePromptText(res.defaults?.[selectedPromptRole] || defaultPrompts[selectedPromptRole] || "");
-      setPromptMsg({ kind: "ok", text: "已将所有能力的提示词恢复为官方默认预设！" });
+      const next = res.defaults?.[selectedPromptRole] || defaultPrompts[selectedPromptRole] || "";
+      promptEditedRef.current = false;
+      promptTextRef.current = next;
+      setActivePromptText(next);
+      setPromptMsg({ kind: "ok", text: "已将所有能力的提示词恢复为官方默认预设" });
     } catch (err: any) {
       setPromptMsg({ kind: "err", text: err.message || "重置失败" });
     } finally {
@@ -297,16 +425,17 @@ export default function Settings() {
     setWriterMsg(null);
     setWriterBusy(true);
     try {
-      await api.post("/ai/settings/ai-key", {
+      const res = await api.post<{ ok: boolean; source?: string }>("/ai/settings/ai-key", {
         apiKey: writerKey.trim(),
         mode: writerMode,
         baseUrl: writerBaseUrl.trim() || null,
         protocol: writerProtocol,
         model: writerModel.trim() || null,
+        thinking: writerThinking,
       });
       setWriterKey("");
-      setWriterMsg({ kind: "ok", text: writerMode === "session" ? "小说助手配置已保存（仅本次会话有效）" : "小说助手配置已加密保存到账号" });
-      await loadSettings();
+      setWriterMsg({ kind: "ok", text: savedText(res, writerMode, "小说写作助手配置") });
+      await loadSettings("writer");
     } catch (err: any) {
       setWriterMsg({ kind: "err", text: err.message || "保存失败" });
     } finally {
@@ -316,12 +445,21 @@ export default function Settings() {
 
   const clearWriter = async () => {
     if (!confirm("确定清除小说写作助手的 API Key 及配置？")) return;
-    await api.post("/ai/settings/ai-key", { mode: "clear" });
-    setWriterBaseUrl("");
-    setWriterProtocol("auto");
-    setWriterModel("");
-    setWriterMsg({ kind: "ok", text: "已清除小说助手个人配置" });
-    await loadSettings();
+    setWriterBusy(true);
+    setWriterMsg(null);
+    try {
+      await api.post("/ai/settings/ai-key", { mode: "clear" });
+      setWriterBaseUrl("");
+      setWriterProtocol("auto");
+      setWriterModel("");
+      setWriterThinking("auto");
+      setWriterMsg({ kind: "ok", text: "已清除小说写作助手个人配置" });
+      await loadSettings("writer");
+    } catch (err: any) {
+      setWriterMsg({ kind: "err", text: err?.message || "清除失败，请重试" });
+    } finally {
+      setWriterBusy(false);
+    }
   };
 
 
@@ -330,16 +468,17 @@ export default function Settings() {
     setAgentMsg(null);
     setAgentBusy(true);
     try {
-      await api.post("/ai/settings/agent-key", {
+      const res = await api.post<{ ok: boolean; source?: string }>("/ai/settings/agent-key", {
         apiKey: agentKey.trim(),
         mode: agentMode,
         baseUrl: agentBaseUrl.trim() || null,
         protocol: agentProtocol,
         model: agentModel.trim() || null,
+        thinking: agentThinking,
       });
       setAgentKey("");
-      setAgentMsg({ kind: "ok", text: agentMode === "session" ? "管家 Agent 配置已保存（仅本次会话有效）" : "管家 Agent 配置已加密保存到账号" });
-      await loadSettings();
+      setAgentMsg({ kind: "ok", text: savedText(res, agentMode, "管家 Agent 配置") });
+      await loadSettings("agent");
     } catch (err: any) {
       setAgentMsg({ kind: "err", text: err.message || "保存失败" });
     } finally {
@@ -349,12 +488,21 @@ export default function Settings() {
 
   const clearAgent = async () => {
     if (!confirm("确定清除管家 Agent 的专属 API Key 及配置？（清除后将自动回退共用小说写作助手配置）")) return;
-    await api.post("/ai/settings/agent-key", { mode: "clear" });
-    setAgentBaseUrl("");
-    setAgentProtocol("auto");
-    setAgentModel("");
-    setAgentMsg({ kind: "ok", text: "已清除管家 Agent 专用配置" });
-    await loadSettings();
+    setAgentBusy(true);
+    setAgentMsg(null);
+    try {
+      await api.post("/ai/settings/agent-key", { mode: "clear" });
+      setAgentBaseUrl("");
+      setAgentProtocol("auto");
+      setAgentModel("");
+      setAgentThinking("auto");
+      setAgentMsg({ kind: "ok", text: "已清除管家 Agent 专用配置" });
+      await loadSettings("agent");
+    } catch (err: any) {
+      setAgentMsg({ kind: "err", text: err?.message || "清除失败，请重试" });
+    } finally {
+      setAgentBusy(false);
+    }
   };
 
   const testAgentTools = async () => {
@@ -383,16 +531,17 @@ export default function Settings() {
     setDistillMsg(null);
     setDistillBusy(true);
     try {
-      await api.post("/ai/settings/distill-key", {
+      const res = await api.post<{ ok: boolean; source?: string }>("/ai/settings/distill-key", {
         apiKey: distillKey.trim(),
         mode: distillMode,
         baseUrl: distillBaseUrl.trim() || null,
         protocol: distillProtocol,
         model: distillModel.trim() || null,
+        thinking: distillThinking,
       });
       setDistillKey("");
-      setDistillMsg({ kind: "ok", text: distillMode === "session" ? "蒸馏专用配置已保存（仅本次会话有效）" : "蒸馏专用配置已加密保存到账号" });
-      await loadSettings();
+      setDistillMsg({ kind: "ok", text: savedText(res, distillMode, "蒸馏专用配置") });
+      await loadSettings("distill");
     } catch (err: any) {
       setDistillMsg({ kind: "err", text: err.message || "保存失败" });
     } finally {
@@ -402,12 +551,21 @@ export default function Settings() {
 
   const clearDistill = async () => {
     if (!confirm("确定清除蒸馏作者专用的 API Key 及配置？")) return;
-    await api.post("/ai/settings/distill-key", { mode: "clear" });
-    setDistillBaseUrl("");
-    setDistillProtocol("auto");
-    setDistillModel("");
-    setDistillMsg({ kind: "ok", text: "已清除蒸馏专用个人配置" });
-    await loadSettings();
+    setDistillBusy(true);
+    setDistillMsg(null);
+    try {
+      await api.post("/ai/settings/distill-key", { mode: "clear" });
+      setDistillBaseUrl("");
+      setDistillProtocol("auto");
+      setDistillModel("");
+      setDistillThinking("auto");
+      setDistillMsg({ kind: "ok", text: "已清除蒸馏专用个人配置" });
+      await loadSettings("distill");
+    } catch (err: any) {
+      setDistillMsg({ kind: "err", text: err?.message || "清除失败，请重试" });
+    } finally {
+      setDistillBusy(false);
+    }
   };
 
   const saveWorld = async (e: React.FormEvent) => {
@@ -415,16 +573,17 @@ export default function Settings() {
     setWorldMsg(null);
     setWorldBusy(true);
     try {
-      await api.post("/ai/settings/world-key", {
+      const res = await api.post<{ ok: boolean; source?: string }>("/ai/settings/world-key", {
         apiKey: worldKey.trim(),
         mode: worldMode,
         baseUrl: worldBaseUrl.trim() || null,
         protocol: worldProtocol,
         model: worldModel.trim() || null,
+        thinking: worldThinking,
       });
       setWorldKey("");
-      setWorldMsg({ kind: "ok", text: worldMode === "session" ? "角色与地图配置已保存（仅本次会话有效）" : "角色与地图配置已加密保存到账号" });
-      await loadSettings();
+      setWorldMsg({ kind: "ok", text: savedText(res, worldMode, "角色与地图配置") });
+      await loadSettings("world");
     } catch (err: any) {
       setWorldMsg({ kind: "err", text: err.message || "保存失败" });
     } finally {
@@ -433,19 +592,34 @@ export default function Settings() {
   };
 
   const clearWorld = async () => {
-    if (!confirm("确定清除角色与地图的专用 API Key 及配置？（清除后将自动回退共用小说助手配置）")) return;
-    await api.post("/ai/settings/world-key", { mode: "clear" });
-    setWorldBaseUrl("");
-    setWorldProtocol("auto");
-    setWorldModel("");
-    setWorldMsg({ kind: "ok", text: "已清除角色与地图专用配置，现已回退共用写作助手配置" });
-    await loadSettings();
+    if (!confirm("确定清除角色与地图的专用 API Key 及配置？（清除后将自动回退共用小说写作助手配置）")) return;
+    setWorldBusy(true);
+    setWorldMsg(null);
+    try {
+      await api.post("/ai/settings/world-key", { mode: "clear" });
+      setWorldBaseUrl("");
+      setWorldProtocol("auto");
+      setWorldModel("");
+      setWorldThinking("auto");
+      setWorldMsg({ kind: "ok", text: "已清除角色与地图专用配置，现已回退共用写作助手配置" });
+      await loadSettings("world");
+    } catch (err: any) {
+      setWorldMsg({ kind: "err", text: err?.message || "清除失败，请重试" });
+    } finally {
+      setWorldBusy(false);
+    }
   };
 
   const writerConfig = settings?.writer || settings;
   const agentConfig = settings?.agent;
   const distillConfig = settings?.distill;
   const worldConfig = settings?.world;
+
+  // MCP SSE 地址跟随当前访问来源（便携版使用随机端口，写死 127.0.0.1:3000 会指向错误端口）
+  const mcpSseLocalUrl = typeof window !== "undefined"
+    ? `${window.location.origin}/api/mcp/sse`
+    : "http://127.0.0.1:3000/api/mcp/sse";
+  const mcpSseLanUrl = networkInfo?.lanUrls?.[0] ? `${networkInfo.lanUrls[0]}/api/mcp/sse` : "";
 
   // 像 cc-switch 那样，根据 API Key + Base URL 主动拉取上游可用模型列表
   const fetchModels = async (
@@ -591,48 +765,57 @@ export default function Settings() {
     }
   };
 
-  const importFromDistilled = async () => {
+  const openSkillImport = async () => {
+    setSkillImportOpen(true);
+    setSkillImportError("");
+    setSkillImportBusy(true);
     try {
-      const data = await api.get<{ authors: Array<{ id: number; name: string; slug: string }> }>("/skill-authors");
-      const list = data.authors || [];
-      if (!list.length) {
-        setSkillMsg({ kind: "err", text: "暂无可用的蒸馏作者" });
-        return;
-      }
-      const choice = prompt(
-        "请输入要导入的蒸馏作者 ID：\n" + list.map((a) => `#${a.id} ${a.name}（${a.slug}）`).join("\n"),
-        String(list[0].id)
-      );
-      if (!choice) return;
-      const id = Number(choice);
-      if (!Number.isInteger(id)) {
-        setSkillMsg({ kind: "err", text: "无效的 ID" });
-        return;
-      }
-      const scope = (prompt("注入范围（writer / distill / world / all）：", "writer") || "writer").trim();
-      if (!["writer", "distill", "world", "all"].includes(scope)) {
-        setSkillMsg({ kind: "err", text: "scope 必须是 writer/distill/world/all 之一" });
-        return;
-      }
-      setSkillBusy(true);
-      await api.post("/user-skills/from-distilled", { authorId: id, scope });
-      setSkillMsg({ kind: "ok", text: "已从蒸馏作者导入 Skill" });
-      await loadSkills();
+      const list = await skillAuthorApi.list();
+      const options = (list || []).map((a) => ({
+        id: a.id,
+        name: a.name,
+        slug: a.slug,
+        hasVersion: Boolean(a.current_version),
+      }));
+      setSkillImportAuthors(options);
+      const firstUsable = options.find((a) => a.hasVersion) || options[0];
+      setSkillImportAuthorId(firstUsable ? String(firstUsable.id) : "");
+      if (!options.length) setSkillImportError("暂无可用的蒸馏作者，请先到「蒸馏作者」页创建并生成版本");
     } catch (err: any) {
-      setSkillMsg({ kind: "err", text: err.message || "导入失败" });
+      setSkillImportError(err?.message || "加载蒸馏作者失败");
     } finally {
-      setSkillBusy(false);
+      setSkillImportBusy(false);
     }
   };
 
-  const filteredSkills = skillScopeFilter === "all"
+  const confirmSkillImport = async () => {
+    const id = Number(skillImportAuthorId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setSkillImportError("请选择蒸馏作者");
+      return;
+    }
+    setSkillImportBusy(true);
+    setSkillImportError("");
+    try {
+      await api.post("/user-skills/from-distilled", { authorId: id, scope: skillImportScope });
+      setSkillImportOpen(false);
+      setSkillMsg({ kind: "ok", text: "已从蒸馏作者导入 Skill" });
+      await loadSkills();
+    } catch (err: any) {
+      setSkillImportError(err?.message || "导入失败");
+    } finally {
+      setSkillImportBusy(false);
+    }
+  };
+
+  const filteredSkills = skillScopeFilter === "__all__"
     ? skills
-    : skills.filter((s) => s.scope === (skillScopeFilter as SkillRec["scope"]) || s.scope === "all");
+    : skills.filter((s) => s.scope === skillScopeFilter || s.scope === "all");
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 space-y-6">
       <div>
-        <h1 className="serif-title mb-1 text-2xl text-ink">API 设置</h1>
+        <h1 className="serif-title mb-1 text-2xl text-ink">AI 与智能体设置</h1>
         <p className="text-sm text-ink-2">账号：{user?.username}（{user?.role === "admin" ? "管理员" : "作者"}）</p>
       </div>
 
@@ -640,8 +823,8 @@ export default function Settings() {
         <p className="flex items-start gap-2">
           <AlertCircle size={14} className="mt-0.5 shrink-0 text-gold" />
           <span>
-            系统支持将<strong>小说写作助手</strong>、<strong>蒸馏长篇作者</strong>与<strong>角色与地图设定库</strong>配置为不同的大模型服务商或网关。<br />
-            获取 API Key：可前往 <a className="text-link underline" href="https://console.anthropic.com/" target="_blank" rel="noreferrer">console.anthropic.com</a>，或访问 <a className="inline-flex items-center gap-1 text-link underline" href="https://ccswitch.io/" target="_blank" rel="noreferrer">CC-Switch 官网 <ExternalLink size={11} /></a> 了解配置。<br />
+            系统支持将<strong>小说写作助手</strong>、<strong>管家 Agent</strong>、<strong>角色与地图</strong>与<strong>蒸馏作者</strong>分别配置为不同的大模型服务商或网关，每个模块可单独设置模型与思考强度。<br />
+            获取 API Key：可前往 <a className="text-link underline" href="https://console.anthropic.com/" target="_blank" rel="noreferrer">console.anthropic.com</a>，或访问 <a className="inline-flex items-center gap-1 text-link underline" href="https://ccswitch.io/" target="_blank" rel="noreferrer">CC-Switch 官网 <ExternalLink size={11} /></a> 了解本地代理配置。<br />
             注意：<code>https://ccswitch.io/</code> 是官网，不是 API Base URL；Base URL 必须填写实际 API 网关地址。
           </span>
         </p>
@@ -756,7 +939,7 @@ export default function Settings() {
           </div>
           <div className="flex items-center gap-2">
             <span className="rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] text-emerald-400">
-              25 项 Tools + 3 项 Prompts 就绪
+              内置 25 个工具 · 3 个提示词模板
             </span>
             {mcpAgentOpen ? <ChevronUp size={16} className="text-ink-3" /> : <ChevronDown size={16} className="text-ink-3" />}
           </div>
@@ -803,21 +986,35 @@ export default function Settings() {
                 </div>
                 <p className="text-ink-3 text-[11px]">远程/网络 Agent 连接 SSE URL：</p>
                 <div className="flex items-center justify-between rounded bg-surface px-2.5 py-1.5 font-mono text-[11px] text-ink-2 border border-border">
-                  <span className="truncate">{`http://127.0.0.1:${networkInfo?.port || 3000}/api/mcp/sse`}</span>
+                  <span className="truncate">{mcpSseLocalUrl}</span>
                   <button
                     type="button"
                     className="ml-2 rounded p-1 hover:text-primary-2 shrink-0"
-                    onClick={(e) => { e.stopPropagation(); copyToClipboard(`http://127.0.0.1:${networkInfo?.port || 3000}/api/mcp/sse`); }}
+                    onClick={(e) => { e.stopPropagation(); copyToClipboard(mcpSseLocalUrl); }}
                     title="复制 SSE URL"
                   >
-                    {copiedUrl === `http://127.0.0.1:${networkInfo?.port || 3000}/api/mcp/sse` ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                    {copiedUrl === mcpSseLocalUrl ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
                   </button>
                 </div>
+                {mcpSseLanUrl && (
+                  <div className="flex items-center justify-between rounded bg-surface px-2.5 py-1.5 font-mono text-[11px] text-ink-2 border border-border">
+                    <span className="truncate">{mcpSseLanUrl}</span>
+                    <button
+                      type="button"
+                      className="ml-2 rounded p-1 hover:text-primary-2 shrink-0"
+                      onClick={(e) => { e.stopPropagation(); copyToClipboard(mcpSseLanUrl); }}
+                      title="复制局域网 SSE URL"
+                    >
+                      {copiedUrl === mcpSseLanUrl ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                    </button>
+                  </div>
+                )}
+                <p className="text-[10px] text-amber-300/80">⚠️ SSE 接入目前未做登录鉴权，请仅在可信网络中使用。</p>
               </div>
             </div>
 
             <div className="rounded-md border border-border bg-surface p-3 text-xs text-ink-3 flex items-center justify-between">
-              <span>📁 项目根目录下已生成 <strong className="text-ink font-mono font-normal">.mcp.json</strong>、<strong className="text-ink font-mono font-normal">astrbot_mcp.json</strong>、<strong className="text-ink font-mono font-normal">claude_desktop_config.json</strong> 与 <strong className="text-ink font-mono font-normal">MCP使用说明.md</strong>。</span>
+              <span>📁 可参考 <strong className="text-ink font-mono font-normal">MCP使用说明.md</strong> 手动配置 <strong className="text-ink font-mono font-normal">.mcp.json</strong> 或 <strong className="text-ink font-mono font-normal">claude_desktop_config.json</strong>；运行 MCP 前请先执行 <code className="text-ink font-mono font-normal">npm run build -w server</code>。</span>
             </div>
           </>
         )}
@@ -948,7 +1145,15 @@ export default function Settings() {
                 <button
                   type="button"
                   className="btn-ghost !min-h-7 !px-2 text-[11px]"
-                  onClick={async () => { await api.del(`/mcp/clients/${c.id}`); await loadMcpClients(); }}
+                  onClick={async () => {
+                    setMcpMsg(null);
+                    try {
+                      await api.del(`/mcp/clients/${c.id}`);
+                      await loadMcpClients();
+                    } catch (err: any) {
+                      setMcpMsg({ kind: "err", text: err?.message || "断开失败，请重试" });
+                    }
+                  }}
                 >
                   断开
                 </button>
@@ -1071,6 +1276,7 @@ export default function Settings() {
             </div>
             <ModelPicker state={writerModels} onPick={(m) => setWriterModel(m)} onClose={() => setWriterModels((s) => ({ ...s, open: false }))} />
           </div>
+          <ThinkingSelect id="writer-thinking" value={writerThinking} onChange={setWriterThinking} disabled={writerBusy} />
           <div className="flex gap-4">
             <label className="flex items-center gap-2 text-sm text-ink-2">
               <input type="radio" checked={writerMode === "persist"} onChange={() => setWriterMode("persist")} />
@@ -1078,7 +1284,7 @@ export default function Settings() {
             </label>
             <label className="flex items-center gap-2 text-sm text-ink-2">
               <input type="radio" checked={writerMode === "session"} onChange={() => setWriterMode("session")} />
-              仅本次会话（更私密）
+              仅本次会话（进程内保存，退出登录或服务重启后失效）
             </label>
           </div>
           {writerMsg && (
@@ -1091,7 +1297,7 @@ export default function Settings() {
             <button type="submit" className="btn-primary" disabled={writerBusy}>
               {writerBusy ? "保存中…" : "保存写作助手配置"}
             </button>
-            {(user?.ai_api_key_enabled || writerConfig?.keySource === "session") && (
+            {(writerConfig?.keySource === "user-db" || writerConfig?.keySource === "session") && (
               <button type="button" className="btn-danger" onClick={() => void clearWriter()}>
                 <Trash2 size={14} /> 清除密钥
               </button>
@@ -1116,7 +1322,7 @@ export default function Settings() {
         <p className="text-xs text-ink-3">
           用于全自动调度小说章节、细纲规划、角色档案更新与 MCP 工具执行的自主 ReAct Agent。
           <br />
-          <strong>支持完全自定义连接地址与专属模型</strong>：如配置本地代理（如 <code>http://127.0.0.1:15721/v1</code>）、Claude 3.7 / 4.8 或具备完整 Function-Calling（工具调用）能力的模型端点。
+          <strong>支持完全自定义连接地址与专属模型</strong>：如配置本地代理（如 <code>http://127.0.0.1:15721/v1</code>），或使用具备完整 Function-Calling（工具调用）能力的模型端点。
           未单独配置时，将自动平滑回退继承上方「小说写作助手」的配置。
         </p>
 
@@ -1147,7 +1353,7 @@ export default function Settings() {
                 className="input font-mono text-xs"
                 value={agentBaseUrl}
                 onChange={(e) => setAgentBaseUrl(e.target.value)}
-                placeholder="留空共用小说助手，如 http://127.0.0.1:15721/v1 或 https://api.deepseek.com/v1"
+                placeholder="留空共用小说写作助手，如 http://127.0.0.1:15721/v1 或 https://api.deepseek.com/v1"
               />
               <p className="mt-1 text-[11px] text-ink-3">
                 若以 <code>/v1</code> 结尾且协议为自动，将采用 OpenAI Function Calling 标准兼容模式。
@@ -1182,7 +1388,7 @@ export default function Settings() {
                 onClick={() => void fetchModels(
                   agentKey || writerKey,
                   agentBaseUrl || writerBaseUrl,
-                  agentProtocol === "auto" ? writerProtocol : agentProtocol,
+                  agentProtocol,
                   "agent",
                   setAgentModels
                 )}
@@ -1198,10 +1404,12 @@ export default function Settings() {
               className="input font-mono text-xs"
               value={agentModel}
               onChange={(e) => setAgentModel(e.target.value)}
-              placeholder="留空共用小说助手模型，如 deepseek-chat, gpt-4o, claude-3-7-sonnet 等"
+              placeholder="留空共用小说写作助手模型，如 deepseek-chat、gpt-4o、claude-opus-5 等"
             />
             <ModelPicker state={agentModels} onPick={(m) => setAgentModel(m)} onClose={() => setAgentModels((s) => ({ ...s, open: false }))} />
           </div>
+
+          <ThinkingSelect id="agent-thinking" value={agentThinking} onChange={setAgentThinking} disabled={agentBusy} />
 
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-2 text-sm text-ink-2 cursor-pointer">
@@ -1222,7 +1430,7 @@ export default function Settings() {
                 checked={agentMode === "session"}
                 onChange={() => setAgentMode("session")}
               />
-              仅保存在当前会话（关闭网页即失效）
+              仅保存在当前会话（退出登录或服务重启后失效；不会删除账号里已保存的密钥）
             </label>
           </div>
 
@@ -1257,7 +1465,7 @@ export default function Settings() {
               {agentToolTesting ? <Loader2 size={13} className="animate-spin" /> : <Plug size={13} />}
               {agentToolTesting ? "探针检测中…" : "测试 Agent 工具调用兼容性"}
             </button>
-            {(user?.agent_api_key_enabled || (agentConfig?.keySource === "session" && agentConfig.isDedicated)) && (
+            {(agentConfig?.keySource === "user-db" || agentConfig?.keySource === "session") && (
               <button type="button" className="btn-danger" onClick={() => void clearAgent()}>
                 <Trash2 size={14} /> 清除专用配置
               </button>
@@ -1357,7 +1565,11 @@ export default function Settings() {
               className="input w-full font-mono text-xs leading-relaxed transition-all focus:border-primary-2"
               rows={7}
               value={activePromptText}
-              onChange={(e) => setActivePromptText(e.target.value)}
+              onChange={(e) => {
+                promptEditedRef.current = true;
+                promptTextRef.current = e.target.value;
+                setActivePromptText(e.target.value);
+              }}
               placeholder="请输入自定义系统提示词 / 创作指令…"
             />
           </div>
@@ -1508,7 +1720,7 @@ export default function Settings() {
                 type="button"
                 className="btn-secondary flex shrink-0 items-center gap-1 text-xs whitespace-nowrap"
                 title="根据上方填写的 API Key 与 Base URL 主动拉取上游可用模型列表（类似 cc-switch）"
-                onClick={() => void fetchModels(worldKey, worldBaseUrl, worldProtocol, "world", setWorldModels)}
+                onClick={() => void fetchModels(worldKey || writerKey, worldBaseUrl || writerBaseUrl, worldProtocol, "world", setWorldModels)}
                 disabled={worldModels.busy}
               >
                 {worldModels.busy ? <Loader2 size={12} className="animate-spin" /> : <ListFilter size={12} />}
@@ -1517,6 +1729,7 @@ export default function Settings() {
             </div>
             <ModelPicker state={worldModels} onPick={(m) => setWorldModel(m)} onClose={() => setWorldModels((s) => ({ ...s, open: false }))} />
           </div>
+          <ThinkingSelect id="world-thinking" value={worldThinking} onChange={setWorldThinking} disabled={worldBusy} />
           <div className="flex gap-4">
             <label className="flex items-center gap-2 text-sm text-ink-2">
               <input type="radio" checked={worldMode === "persist"} onChange={() => setWorldMode("persist")} />
@@ -1524,7 +1737,7 @@ export default function Settings() {
             </label>
             <label className="flex items-center gap-2 text-sm text-ink-2">
               <input type="radio" checked={worldMode === "session"} onChange={() => setWorldMode("session")} />
-              仅本次会话（更私密）
+              仅本次会话（进程内保存，退出登录或服务重启后失效）
             </label>
           </div>
           {worldMsg && (
@@ -1537,7 +1750,7 @@ export default function Settings() {
             <button type="submit" className="btn-primary" disabled={worldBusy}>
               {worldBusy ? "保存中…" : "保存角色与地图配置"}
             </button>
-            {(user?.world_api_key_enabled || (worldConfig?.keySource === "session" && worldConfig.isDedicated)) && (
+            {(worldConfig?.keySource === "user-db" || worldConfig?.keySource === "session") && (
               <button type="button" className="btn-danger" onClick={() => void clearWorld()}>
                 <Trash2 size={14} /> 清除专用密钥
               </button>
@@ -1633,6 +1846,7 @@ export default function Settings() {
             </div>
             <ModelPicker state={distillModels} onPick={(m) => setDistillModel(m)} onClose={() => setDistillModels((s) => ({ ...s, open: false }))} />
           </div>
+          <ThinkingSelect id="distill-thinking" value={distillThinking} onChange={setDistillThinking} disabled={distillBusy} />
           <div className="flex gap-4">
             <label className="flex items-center gap-2 text-sm text-ink-2">
               <input type="radio" checked={distillMode === "persist"} onChange={() => setDistillMode("persist")} />
@@ -1640,7 +1854,7 @@ export default function Settings() {
             </label>
             <label className="flex items-center gap-2 text-sm text-ink-2">
               <input type="radio" checked={distillMode === "session"} onChange={() => setDistillMode("session")} />
-              仅本次会话（更私密）
+              仅本次会话（进程内保存，退出登录或服务重启后失效）
             </label>
           </div>
           {distillMsg && (
@@ -1653,7 +1867,7 @@ export default function Settings() {
             <button type="submit" className="btn-primary" disabled={distillBusy}>
               {distillBusy ? "保存中…" : "保存蒸馏配置"}
             </button>
-            {distillConfig?.keyConfigured && (
+            {(distillConfig?.keySource === "user-db" || distillConfig?.keySource === "session") && (
               <button type="button" className="btn-danger" onClick={() => void clearDistill()}>
                 <Trash2 size={14} /> 清除蒸馏密钥
               </button>
@@ -1676,7 +1890,7 @@ export default function Settings() {
             <button
               type="button"
               className="btn-secondary flex items-center gap-1.5 text-xs py-1"
-              onClick={importFromDistilled}
+              onClick={() => void openSkillImport()}
               disabled={skillBusy}
               title="把蒸馏作者的最新版本 skill_markdown 当作 Skill 导入"
             >
@@ -1692,13 +1906,13 @@ export default function Settings() {
 
         {/* scope 过滤 */}
         <div className="flex flex-wrap gap-1.5 border-b border-border/70 pb-2.5">
-          {[{ id: "all", label: "全部", desc: "显示所有 Skill", tone: "bg-surface-2 text-ink" }, ...SKILL_SCOPES].map((sc) => {
-            const isSel = skillScopeFilter === (sc.id as any);
+          {[{ id: "__all__", label: "全部", desc: "显示所有 Skill", tone: "bg-surface-2 text-ink" }, ...SKILL_SCOPES].map((sc) => {
+            const isSel = skillScopeFilter === (sc.id as "all" | SkillRec["scope"] | "__all__");
             return (
               <button
                 key={sc.id}
                 type="button"
-                onClick={() => setSkillScopeFilter(sc.id as any)}
+                onClick={() => setSkillScopeFilter(sc.id as "all" | SkillRec["scope"] | "__all__")}
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all border ${
                   isSel
                     ? "bg-amber-500 text-white border-amber-500 shadow-sm"
@@ -1931,10 +2145,11 @@ export default function Settings() {
               <KeyRound size={15} className="text-primary-2" /> 第一步：如何正确配置你的专属 AI 创作接口
             </h3>
             <ul className="list-disc space-y-1.5 pl-4 text-ink-2">
-              <li><strong>三路独立架构：</strong>
+              <li><strong>四路独立架构：</strong>
                 <ul className="mt-1 list-circle space-y-1 pl-4 text-ink-3">
                   <li><strong>小说写作助手：</strong>负责草稿生成、续写、全文润色扩写、大纲规划与剧情问答，高频使用推荐配置。</li>
-                  <li><strong>角色与地图专用：</strong>负责 AI 从正文提取角色与完善地图要素。未单独填写时自动共用小说助手的配置。</li>
+                  <li><strong>管家 Agent：</strong>负责多步自主任务（阅读全书、批量改稿、更新人物动态账本），需要支持工具调用的模型。</li>
+                  <li><strong>角色与地图专用：</strong>负责 AI 从正文提取角色与完善地图要素。未单独填写时自动共用小说写作助手的配置。</li>
                   <li><strong>蒸馏作者专用：</strong>用于数万至百万字小说原著样本的文风 (writing skill) 与人格 (persona) 深度提炼，推荐配置长上下文模型。</li>
                 </ul>
               </li>
@@ -2017,6 +2232,76 @@ export default function Settings() {
           </div>
         </div>
       </section>
+
+      {/* 从蒸馏作者导入 Skill（页内弹窗，兼容 Electron 不支持 window.prompt） */}
+      {skillImportOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="从蒸馏作者导入 Skill">
+          <div className="w-full max-w-md rounded-lg border border-border bg-surface p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="serif-title text-sm text-ink">从蒸馏作者导入 Skill</h3>
+              <button
+                type="button"
+                className="rounded p-1 text-ink-3 hover:text-ink"
+                onClick={() => { if (!skillImportBusy) setSkillImportOpen(false); }}
+                aria-label="关闭"
+              >
+                ✕
+              </button>
+            </div>
+            {skillImportBusy && skillImportAuthors.length === 0 ? (
+              <p className="py-4 text-center text-xs text-ink-3">加载蒸馏作者…</p>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-xs text-ink-2" htmlFor="skill-import-author">蒸馏作者</label>
+                  <select
+                    id="skill-import-author"
+                    className="input text-xs"
+                    value={skillImportAuthorId}
+                    onChange={(e) => setSkillImportAuthorId(e.target.value)}
+                    disabled={skillImportBusy || skillImportAuthors.length === 0}
+                  >
+                    {skillImportAuthors.length === 0 && <option value="">暂无蒸馏作者</option>}
+                    {skillImportAuthors.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}（{a.slug}）{a.hasVersion ? "" : " · 尚未生成版本"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-ink-2" htmlFor="skill-import-scope">注入范围</label>
+                  <select
+                    id="skill-import-scope"
+                    className="input text-xs"
+                    value={skillImportScope}
+                    onChange={(e) => setSkillImportScope(e.target.value as SkillRec["scope"])}
+                    disabled={skillImportBusy}
+                  >
+                    {SKILL_SCOPES.map((s) => (
+                      <option key={s.id} value={s.id}>{s.label} · {s.desc}</option>
+                    ))}
+                  </select>
+                </div>
+                {skillImportError && <p className="rounded border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-300">{skillImportError}</p>}
+                <div className="flex justify-end gap-2 pt-1">
+                  <button type="button" className="btn-ghost text-xs" onClick={() => setSkillImportOpen(false)} disabled={skillImportBusy}>
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary text-xs"
+                    onClick={() => void confirmSkillImport()}
+                    disabled={skillImportBusy || !skillImportAuthorId}
+                  >
+                    {skillImportBusy ? "导入中…" : "导入"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

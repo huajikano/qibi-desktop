@@ -13,21 +13,25 @@ export interface UserRow {
   ai_api_base_url: string | null;
   ai_api_protocol: "auto" | "anthropic" | "openai";
   ai_api_model: string | null;
+  ai_api_thinking?: string;
   distill_api_key_enc?: string | null;
   distill_api_key_enabled?: number;
   distill_api_base_url?: string | null;
   distill_api_protocol?: "auto" | "anthropic" | "openai";
   distill_api_model?: string | null;
+  distill_api_thinking?: string;
   world_api_key_enc?: string | null;
   world_api_key_enabled?: number;
   world_api_base_url?: string | null;
   world_api_protocol?: "auto" | "anthropic" | "openai";
   world_api_model?: string | null;
+  world_api_thinking?: string;
   agent_api_key_enc?: string | null;
   agent_api_key_enabled?: number;
   agent_api_base_url?: string | null;
   agent_api_protocol?: "auto" | "anthropic" | "openai";
   agent_api_model?: string | null;
+  agent_api_thinking?: string;
   disabled: number;
   created_at: string;
 }
@@ -57,6 +61,7 @@ declare module "express-session" {
     userApiKeyBaseUrl?: string;
     userApiKeyProtocol?: "auto" | "anthropic" | "openai";
     userApiKeyModel?: string;
+    userApiKeyThinking?: string;
     userApiBaseUrl?: string;
     userApiProtocol?: "auto" | "anthropic" | "openai";
     userApiModel?: string;
@@ -64,6 +69,7 @@ declare module "express-session" {
     distillApiKeyBaseUrl?: string;
     distillApiKeyProtocol?: "auto" | "anthropic" | "openai";
     distillApiKeyModel?: string;
+    distillApiKeyThinking?: string;
     distillApiBaseUrl?: string;
     distillApiProtocol?: "auto" | "anthropic" | "openai";
     distillApiModel?: string;
@@ -71,6 +77,7 @@ declare module "express-session" {
     worldApiKeyBaseUrl?: string;
     worldApiKeyProtocol?: "auto" | "anthropic" | "openai";
     worldApiKeyModel?: string;
+    worldApiKeyThinking?: string;
     worldApiBaseUrl?: string;
     worldApiProtocol?: "auto" | "anthropic" | "openai";
     worldApiModel?: string;
@@ -78,6 +85,7 @@ declare module "express-session" {
     agentApiKeyBaseUrl?: string;
     agentApiKeyProtocol?: "auto" | "anthropic" | "openai";
     agentApiKeyModel?: string;
+    agentApiKeyThinking?: string;
     agentApiBaseUrl?: string;
     agentApiProtocol?: "auto" | "anthropic" | "openai";
     agentApiModel?: string;

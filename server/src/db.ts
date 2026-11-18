@@ -34,21 +34,25 @@ CREATE TABLE IF NOT EXISTS users (
   ai_api_base_url TEXT,
   ai_api_protocol TEXT NOT NULL DEFAULT 'auto',
   ai_api_model TEXT,
+  ai_api_thinking TEXT NOT NULL DEFAULT 'auto',
   distill_api_key_enc TEXT,
   distill_api_key_enabled INTEGER DEFAULT 0,
   distill_api_base_url TEXT,
   distill_api_protocol TEXT NOT NULL DEFAULT 'auto',
   distill_api_model TEXT,
+  distill_api_thinking TEXT NOT NULL DEFAULT 'auto',
   world_api_key_enc TEXT,
   world_api_key_enabled INTEGER DEFAULT 0,
   world_api_base_url TEXT,
   world_api_protocol TEXT NOT NULL DEFAULT 'auto',
   world_api_model TEXT,
+  world_api_thinking TEXT NOT NULL DEFAULT 'auto',
   agent_api_key_enc TEXT,
   agent_api_key_enabled INTEGER DEFAULT 0,
   agent_api_base_url TEXT,
   agent_api_protocol TEXT NOT NULL DEFAULT 'auto',
   agent_api_model TEXT,
+  agent_api_thinking TEXT NOT NULL DEFAULT 'auto',
   disabled INTEGER DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -325,6 +329,12 @@ if (!userColumns.some((c) => c.name === "agent_api_protocol")) {
 }
 if (!userColumns.some((c) => c.name === "agent_api_model")) {
   db.exec("ALTER TABLE users ADD COLUMN agent_api_model TEXT");
+}
+// 思考强度（writer/distill/world/agent 各自独立），auto 表示不下发该参数
+for (const prefix of ["ai", "distill", "world", "agent"]) {
+  if (!userColumns.some((c) => c.name === `${prefix}_api_thinking`)) {
+    db.exec(`ALTER TABLE users ADD COLUMN ${prefix}_api_thinking TEXT NOT NULL DEFAULT 'auto'`);
+  }
 }
 if (!userColumns.some((c) => c.name === "registered_from_ip")) {
   db.exec("ALTER TABLE users ADD COLUMN registered_from_ip TEXT DEFAULT ''");
